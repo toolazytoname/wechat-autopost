@@ -1,0 +1,24 @@
+# 忽略敏感配置
+config.ini
+*.log
+credentials.json
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+venv/
+.venv/
+
+# IDE
+.idea/
+.vscode/
+
+# 缓存
+articles/*.json
+
+# 生成的图片
+generated_images/
+
+# 发布历史
+published_history.json
