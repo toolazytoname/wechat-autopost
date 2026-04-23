@@ -37,6 +37,7 @@ class ArticleRewriter:
             return None
         
         # 构建prompt
+        # 微信标题限制32字节（约8-9个中文字），必须严格控制
         user_prompt = f"""请改写以下文章：
 
 【原标题】
@@ -46,9 +47,15 @@ class ArticleRewriter:
 {original_content[:2000]}
 
 请直接输出改写后的内容，格式如下：
-【新标题】（一句话吸引人的标题）
+【新标题】（必须恰好8个汉字以内，如"微软开源神器体验"）
 ---
-【正文】（改写后的文章正文，800-1500字）"""
+【正文】（改写后的文章正文，800-1500字）
+
+【重要提醒】
+1. 标题必须恰好8个汉字！例如"微软开源神器体验"是8个字，"绝了！这个工具太好用"是10个字（超过限制）
+2. 标题必须是完整的一句话，有头有尾，不能被截断
+3. 标题要有悬念或亮点，吸引人点击
+4. 正文要有干货，语言口语化"""
 
         try:
             response = requests.post(
@@ -125,22 +132,36 @@ class ArticleRewriter:
         new_title = new_title.strip('"').strip('"').strip()
         
         # 限制标题长度：微信限制34字节（实测），超过会报错45003
-        # 按字节截断，不切割中文
+        # 使用智能截断，在自然断点处截断
         try:
             max_bytes = 32  # 留2字节余量
             title_bytes = new_title.encode('utf-8')
             if len(title_bytes) > max_bytes:
-                # 按字节截断，但保证不切断中文
+                # 智能截断：在标点、顿号、逗号处截断
                 truncated = ''
                 current_bytes = 0
-                for char in new_title:
+                break_points = ['。', '！', '？', '，', '、', '"', '"', ''', ''']
+                
+                for i, char in enumerate(new_title):
                     char_bytes = len(char.encode('utf-8'))
+                    
+                    # 如果加上这个字符会超限
                     if current_bytes + char_bytes > max_bytes:
+                        # 如果已经有内容，检查是否是好的截断点
+                        if truncated:
+                            # 在标点处截断是好的
+                            if truncated[-1] in break_points:
+                                break
+                            # 如果前一个字符是好的截断点，也截断
+                            if len(truncated) > 0:
+                                break
                         break
+                    
                     truncated += char
                     current_bytes += char_bytes
+                
                 new_title = truncated
-                print(f"[Rewriter] 标题过长，已截断: {new_title}")
+                print(f"[Rewriter] 标题过长，已智能截断: {new_title}")
         except:
             pass
         
