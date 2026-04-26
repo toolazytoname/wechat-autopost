@@ -38,7 +38,7 @@ st.set_page_config(page_title="自媒体自动发布", page_icon="🤖", layout=
 # --- 侧边栏导航 ---
 page = st.sidebar.radio(
     "功能导航",
-    ["🧪 手动测试", "⚙️ 配置管理", "📋 发布历史"],
+    ["🧪 手动测试", "📊 状态监控", "⚙️ 配置管理", "📋 发布历史"],
     index=0
 )
 
@@ -300,6 +300,210 @@ elif page == "⚙️ 配置管理":
     if st.button("💾 保存配置", type="primary", use_container_width=True):
         save_config(config)
         st.success("✅ 配置已保存到 config.ini")
+
+# ============================================================
+# 状态监控页面
+# ============================================================
+elif page == "📊 状态监控":
+    st.title("📊 系统状态监控")
+    st.rerun_hook = None  # 用于手动刷新
+
+    import json
+    from datetime import datetime
+
+    history_file = os.path.join(os.path.dirname(__file__), 'published_history.json')
+    config = load_config()
+    pub_cfg = config.get('publish', {})
+
+    # --- 顶部统计卡片 ---
+    col_stat1, col_stat2, col_stat3 = st.columns(3)
+
+    # 读取发布历史
+    today_articles = []
+    if os.path.exists(history_file):
+        with open(history_file) as f:
+            history_data = json.load(f)
+        today_articles = history_data.get('published_today', [])
+        last_date = history_data.get('last_date', '无')
+    else:
+        last_date = '无'
+        history_data = {}
+
+    max_daily = int(pub_cfg.get('max_articles_per_day', 2))
+    schedule_times = [t.strip() for t in pub_cfg.get('schedule_times', '08:00,20:00').split(',') if t.strip()]
+    enabled_platforms = [p.strip() for p in pub_cfg.get('enabled_platforms', 'wechat').split(',') if p.strip()]
+
+    with col_stat1:
+        st.metric("今日发布", f"{len(today_articles)} / {max_daily} 篇",
+                  delta=f"{len(today_articles) - max_daily}" if len(today_articles) > max_daily else None)
+    with col_stat2:
+        st.metric("目标平台", ", ".join(enabled_platforms) if enabled_platforms else "未配置")
+    with col_stat3:
+        st.metric("最近发布日期", last_date)
+
+    # --- 进度条 ---
+    progress = min(len(today_articles) / max_daily, 1.0)
+    st.progress(progress, text=f"今日发布进度: {len(today_articles)}/{max_daily} 篇")
+
+    # --- 发布进度时间线 ---
+    st.markdown("### 📅 今日发布时间线")
+    if today_articles:
+        for item in today_articles:
+            pt = item.get('published_at', '')[:19] if item.get('published_at') else '无时间'
+            title_short = (item.get('title') or '无标题')[:40]
+            platforms = ', '.join(item.get('platforms', []))
+            st.markdown(
+                f":green[✅] **{title_short}**  "
+                f"| 平台: `{platforms}`  "
+                f"| 时间: `{pt}`"
+            )
+    else:
+        st.info("今日暂无发布记录")
+
+    # --- 计划发布时间 ---
+    st.markdown("### ⏰ 计划发布时间")
+    if schedule_times:
+        now = datetime.now()
+        upcoming = [t for t in schedule_times if t > now.strftime('%H:%M')]
+        passed = [t for t in schedule_times if t <= now.strftime('%H:%M')]
+        for t in passed:
+            st.markdown(f":gray[✅] `{t}` — 已执行")
+        for t in upcoming:
+            st.markdown(f":blue[🔔] `{t}` — 等待执行")
+    else:
+        st.warning("未配置发布时间")
+
+    st.markdown("---")
+
+    # --- 微信公众号连接状态 ---
+    st.markdown("### 📱 微信公众号连接状态")
+    wechat = config.get('wechat', {})
+    app_id = wechat.get('app_id', '')
+    app_secret = wechat.get('app_secret', '')
+
+    if app_id and app_secret:
+        # 尝试获取 access_token
+        token_cache_file = os.path.join(os.path.dirname(__file__), '.token_cache.json')
+        cached = {}
+        if os.path.exists(token_cache_file):
+            with open(token_cache_file) as f:
+                cached = json.load(f)
+
+        token_valid = False
+        token_info = "未知"
+        if cached.get('access_token') and cached.get('expires_at', 0) > time.time():
+            token_valid = True
+            remaining = int(cached['expires_at'] - time.time())
+            token_info = f"有效 (剩余 {remaining // 60} 分 {remaining % 60} 秒)"
+        else:
+            with st.spinner("查询微信 access_token..."):
+                try:
+                    import requests
+                    resp = requests.get(
+                        "https://api.weixin.qq.com/cgi-bin/token",
+                        params={
+                            "grant_type": "client_credential",
+                            "appid": app_id,
+                            "secret": app_secret
+                        },
+                        timeout=10
+                    )
+                    data = resp.json()
+                    if data.get('access_token'):
+                        token_valid = True
+                        expires_in = data.get('expires_in', 7200)
+                        expires_at = time.time() + expires_in - 60
+                        cached = {'access_token': data['access_token'], 'expires_at': expires_at}
+                        with open(token_cache_file, 'w') as f:
+                            json.dump(cached, f)
+                        token_info = f"有效 (有效期 {expires_in // 60} 分钟)"
+                        st.success(f"✅ access_token 获取成功 — {token_info}")
+                    else:
+                        err = data.get('errmsg', str(data))
+                        token_info = f"❌ 失败: {err}"
+                        st.error(f"❌ 获取 access_token 失败: {err}")
+                except Exception as e:
+                    token_info = f"❌ 异常: {e}"
+                    st.error(f"❌ 网络异常: {e}")
+
+        if token_valid:
+            st.metric("access_token 状态", token_info)
+    else:
+        st.warning("⚠️ 未配置微信公众号 AppID / AppSecret，请到「配置管理」页面填写")
+
+    st.markdown("---")
+
+    # --- AI 模型状态 ---
+    st.markdown("### 🤖 AI 模型状态")
+    ai = config.get('ai', {})
+    ai_base = ai.get('api_base', '')
+    ai_key = ai.get('api_key', '')
+    ai_model = ai.get('model', '')
+
+    if ai_base and ai_key and ai_model:
+        with st.spinner("测试 AI 连接..."):
+            try:
+                import requests
+                resp = requests.post(
+                    f"{ai_base}/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {ai_key}",
+                        "Content-Type": "application/json"
+                    },
+                    json={
+                        "model": ai_model,
+                        "messages": [{"role": "user", "content": "hi"}],
+                        "max_tokens": 5
+                    },
+                    timeout=15
+                )
+                if resp.status_code == 200:
+                    st.success(f"✅ AI 模型 `{ai_model}` 连接正常")
+                    st.metric("API 地址", ai_base)
+                else:
+                    st.error(f"❌ AI 返回 {resp.status_code}: {resp.text[:150]}")
+                    st.metric("API 地址", ai_base)
+            except Exception as e:
+                st.error(f"❌ AI 连接异常: {e}")
+                st.metric("API 地址", ai_base)
+    else:
+        st.warning("⚠️ 未完整配置 AI，请到「配置管理」页面填写")
+
+    st.markdown("---")
+
+    # --- 信息总览 ---
+    st.markdown("### 🧩 配置总览")
+    info_col1, info_col2 = st.columns(2)
+
+    with info_col1:
+        st.markdown("**📡 订阅源**")
+        feeds = config.get('feeds', {}).get('urls', '未配置')
+        for url in feeds.split(','):
+            if url.strip():
+                st.markdown(f"- `{url.strip()}`")
+
+        st.markdown("")
+        st.markdown("**🔥 头条热榜**")
+        toutiao = config.get('toutiao', {})
+        st.markdown(f"- 启用: `{toutiao.get('enabled', 'false')}`")
+        st.markdown(f"- 分类: `{toutiao.get('categories', '未配置')}`")
+        st.markdown(f"- 篇数: `{toutiao.get('max_count', '20')}`")
+
+    with info_col2:
+        st.markdown("**📤 发布设置**")
+        st.markdown(f"- 平台: `{pub_cfg.get('enabled_platforms', 'wechat')}`")
+        st.markdown(f"- 时间: `{pub_cfg.get('schedule_times', '08:00,20:00')}`")
+        st.markdown(f"- 候选: `{pub_cfg.get('fetch_candidate_count', '10')} 篇/次`")
+
+        st.markdown("")
+        st.markdown("**💾 存储**")
+        storage = config.get('storage', {})
+        st.markdown(f"- 目录: `{storage.get('articles_dir', './articles')}`")
+
+    # --- 刷新按钮 ---
+    st.markdown("---")
+    if st.button("🔄 刷新状态", use_container_width=True):
+        st.rerun()
 
 # ============================================================
 # 发布历史页面
