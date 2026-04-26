@@ -105,7 +105,19 @@ class AutoScheduler:
             
             # 获取完整内容和图片
             print(f"[Scheduler] 获取文章内容: {article.get('title', '')[:30]}...")
-            content = self.fetcher.fetch_article_content(article['url'])
+            
+            # 头条文章用专门的内容抓取方法
+            if article.get('source') == 'toutiao':
+                group_id = ''
+                # 从URL中提取group_id: /article/7632660610332787241/
+                import re
+                match = re.search(r'/article/(\d+)', article['url'])
+                if match:
+                    group_id = match.group(1)
+                content = self.fetcher.fetch_toutiao_article_content(article['url'], group_id)
+            else:
+                content = self.fetcher.fetch_article_content(article['url'])
+            
             if not content or len(content) < 100:
                 print(f"[Scheduler] 文章内容过短跳过: {article.get('title', '')[:30]}")
                 continue
@@ -113,9 +125,11 @@ class AutoScheduler:
             article['content'] = content
             
             # 提取封面图和正文图片
-            images_info = self.fetcher.fetch_article_images(article['url'])
-            article['cover_image'] = images_info.get('cover')
-            article['body_images'] = images_info.get('images', [])
+            # 头条文章已在热榜API中提取封面，跳过封面抓取；正文图片同理
+            if article.get('source') != 'toutiao':
+                images_info = self.fetcher.fetch_article_images(article['url'])
+                article['cover_image'] = images_info.get('cover')
+                article['body_images'] = images_info.get('images', [])
             
             # 检查是否已发布
             if self.is_already_published(article):
