@@ -335,6 +335,10 @@ class WeChatPublisher:
                 article.get('rewritten_content', '')
             )
         
+        # 将外部图片URL上传到微信服务器（微信不支持外部图片）
+        if body_images:
+            body_images = self._upload_body_images_to_wechat(body_images)
+        
         # 如果有正文图片，在合适的位置插入（每3-4段插入一张）
         if body_images:
             content = self._insert_images_into_content(content, body_images)
@@ -507,6 +511,113 @@ class WeChatPublisher:
         
         return None
     
+    def _convert_image_to_jpeg(self, src_path: str, dst_path: str) -> bool:
+        """将图片转换为 JPEG 格式"""
+        try:
+            from PIL import Image
+            with Image.open(src_path) as img:
+                if img.mode in ('RGBA', 'P'):
+                    img = img.convert('RGB')
+                elif img.mode != 'RGB':
+                    img = img.convert('RGB')
+                img.save(dst_path, 'JPEG', quality=85)
+            return True
+        except ImportError:
+            pass
+        try:
+            import imageio
+            img = imageio.imread(src_path)
+            imageio.imwrite(dst_path, img)
+            return True
+        except ImportError:
+            pass
+        return False
+
+    def _upload_body_images_to_wechat(self, image_urls: List[str]) -> List[str]:
+        """
+        将外部图片URL列表下载并上传到微信服务器
+        
+        Args:
+            image_urls: 外部图片URL列表
+            
+        Returns:
+            微信服务器上的图片URL列表（可用于正文内容）
+        """
+        import tempfile
+        
+        wechat_urls = []
+        access_token = self.get_access_token()
+        if not access_token:
+            print(f"[Publisher] 无法获取access_token，正文图片将使用原始URL")
+            return image_urls
+        
+        for url in image_urls:
+            try:
+                print(f"[Publisher] 上传正文图片: {url[:60]}...")
+                img_resp = requests.get(url, headers={
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                }, timeout=15)
+                
+                if img_resp.status_code != 200 or len(img_resp.content) < 1000:
+                    print(f"[Publisher] 图片下载失败({img_resp.status_code})，跳过: {url[:50]}")
+                    continue
+                
+                # 写入临时文件
+                ext = '.jpg'
+                content_type = img_resp.headers.get('Content-Type', '')
+                if 'webp' in content_type:
+                    ext = '.webp'
+                elif 'avif' in content_type:
+                    ext = '.avif'
+                elif 'png' in content_type:
+                    ext = '.png'
+                elif 'gif' in content_type:
+                    ext = '.gif'
+                
+                # 微信 media/uploadimg 只支持 jpeg/png/gif/bmp，avif/webp需转换
+                needs_convert = ext in ('.avif', '.webp')
+                temp_path = tempfile.mktemp(suffix=ext)
+                with open(temp_path, 'wb') as f:
+                    f.write(img_resp.content)
+                
+                # avif/webp 转 jpeg（微信不支持）
+                if needs_convert:
+                    converted = tempfile.mktemp(suffix='.jpg')
+                    if self._convert_image_to_jpeg(temp_path, converted):
+                        os.unlink(temp_path)
+                        temp_path = converted
+                        ext = '.jpg'
+                    else:
+                        os.unlink(temp_path)
+                        print(f"[Publisher] 图片格式不支持且无法转换，跳过: {url[:50]}")
+                        continue
+                
+                # 上传到微信（使用永久素材接口）
+                upload_url = f"https://api.weixin.qq.com/cgi-bin/media/uploadimg?access_token={access_token}"
+                with open(temp_path, 'rb') as f:
+                    mime = 'image/jpeg' if ext == '.jpg' else f'image/{ext[1:]}'
+                    files = {'media': (f'image{ext}', f, mime)}
+                    resp = requests.post(upload_url, files=files, timeout=30)
+                
+                result = resp.json()
+                if 'url' in result:
+                    wechat_urls.append(result['url'])
+                    print(f"[Publisher] 正文图片上传成功: {result['url'][:50]}")
+                else:
+                    print(f"[Publisher] 正文图片上传失败: {result}")
+                
+                os.unlink(temp_path)
+                
+            except Exception as e:
+                print(f"[Publisher] 正文图片处理异常: {e}")
+        
+        if not wechat_urls and image_urls:
+            print(f"[Publisher] 所有正文图片上传失败，使用原始URL")
+            return image_urls
+        
+        print(f"[Publisher] 成功上传 {len(wechat_urls)}/{len(image_urls)} 张正文图片")
+        return wechat_urls
+
     def _upload_image_to_wechat(self, local_path: str) -> Optional[str]:
         """
         上传本地图片到微信获取永久URL
