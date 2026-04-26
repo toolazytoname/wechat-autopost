@@ -225,10 +225,55 @@ class AutoScheduler:
             print("\n[Scheduler] 调度器已停止")
             self.save_history()
     
-    def run_once(self):
-        """手动执行一次（用于测试）"""
-        print("[Scheduler] 手动执行一次...")
-        self.daily_job()
+    def schedule_track(self, track_id: str = None) -> List[Dict]:
+        """按赛道执行定时发布
+
+        Args:
+            track_id: 赛道 ID，为 None 则执行所有启用赛道
+
+        Returns:
+            发布结果列表
+        """
+        from track_manager import TrackManager
+        tm = TrackManager()
+        results = []
+
+        if track_id:
+            tracks = [tm.get_track(track_id)] if tm.get_track(track_id) else []
+        else:
+            tracks = tm.get_enabled_tracks()
+
+        for track in tracks:
+            tid = track['id']
+            pub = track.get('publish', {})
+            max_batch = pub.get('max_per_batch', 2)
+
+            track_feeds = track.get('feeds', [])
+            if not track_feeds:
+                print(f"[Scheduler] 赛道「{track['name']}」无订阅源，跳过")
+                continue
+
+            fetcher = ArticleFetcher(self.config, track_manager=tm)
+            rewriter = ArticleRewriter(self.config, track_manager=tm)
+
+            articles = fetcher.fetch_all(track_id=tid)
+            if not articles:
+                print(f"[Scheduler] 赛道「{track['name']}」抓取为空")
+                continue
+
+            articles = articles[:max_batch]
+
+            for art in articles:
+                rewritten = rewriter.rewrite(art, track_id=tid)
+                if rewritten:
+                    pub_result = self.publisher.publish(rewritten)
+                    results.append({
+                        'track': track['name'],
+                        'title': rewritten.get('rewritten_title', ''),
+                        'status': 'published' if pub_result else 'failed'
+                    })
+
+        return results
 
 if __name__ == '__main__':
     import configparser

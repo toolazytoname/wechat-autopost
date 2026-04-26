@@ -13,9 +13,9 @@ from datetime import datetime
 from typing import List, Dict
 
 class ArticleFetcher:
-    def __init__(self, config: dict):
+    def __init__(self, config: dict, track_manager=None):
         self.config = config
-        # 按逗号分隔读取URLs
+        # 按逗号分隔读取URLs（兼容旧配置）
         urls_str = config.get('feeds', {}).get('urls', '')
         self.urls = [u.strip() for u in urls_str.split(',') if u.strip()]
         self.articles_dir = config.get('storage', {}).get('articles_dir', './articles')
@@ -23,6 +23,12 @@ class ArticleFetcher:
         self.toutiao_categories = [c.strip() for c in self.toutiao_config.get('categories', 'news_hot').split(',') if c.strip()]
         self.toutiao_enabled = self.toutiao_config.get('enabled', 'false').lower() == 'true'
         os.makedirs(self.articles_dir, exist_ok=True)
+
+        # 赛道管理器
+        if track_manager is None:
+            from track_manager import TrackManager
+            track_manager = TrackManager()
+        self.track_manager = track_manager
     
     def fetch_from_toutiao_hot(self, category: str = 'news_hot') -> List[Dict]:
         """从今日头条热榜抓取文章
@@ -96,12 +102,12 @@ class ArticleFetcher:
         
         return articles
     
-    def fetch_from_rss(self, url: str) -> List[Dict]:
+    def fetch_from_rss(self, url: str, max_count: int = 10) -> List[Dict]:
         """从RSS源获取文章列表"""
         articles = []
         try:
             feed = feedparser.parse(url)
-            for entry in feed.entries[:10]:  # 限制数量
+            for entry in feed.entries[:max_count]:  # 限制数量
                 article = {
                     'title': entry.get('title', ''),
                     'url': entry.get('link', ''),
@@ -114,6 +120,55 @@ class ArticleFetcher:
         except Exception as e:
             print(f"[Fetcher] RSS解析失败 {url}: {e}")
         return articles
+
+    def fetch_from_track(self, track_id: str = None) -> List[Dict]:
+        """从指定赛道配置抓取文章
+
+        Args:
+            track_id: 赛道 ID，默认使用活跃赛道
+
+        Returns:
+            文章列表，每篇带有 track_id 标识
+        """
+        if track_id is None:
+            track = self.track_manager.get_active_track()
+        else:
+            track = self.track_manager.get_track(track_id)
+
+        if not track:
+            print("[Fetcher] 未找到赛道配置，fallback 到全局 RSS")
+            return self.fetch_all()
+
+        feeds = self.track_manager.get_enabled_feeds(track['id'])
+        if not feeds:
+            print(f"[Fetcher] 赛道 {track['name']} 没有启用订阅源")
+            return []
+
+        all_articles = []
+        for feed in feeds:
+            url = feed['url']
+            limit = feed.get('max_articles_per_fetch', 10)
+            print(f"[Fetcher] 抓取 {track['name']} / {feed['name']}: {url}")
+            articles = self.fetch_from_rss(url, max_count=limit)
+            for article in articles:
+                article['track_id'] = track['id']
+                article['track_name'] = track['name']
+                article['feed_name'] = feed['name']
+                images = self.fetch_article_images(article['url'])
+                article['cover_image'] = images.get('cover')
+                article['body_images'] = images.get('images', [])
+            all_articles.extend(articles)
+            print(f"[Fetcher] 获取到 {len(articles)} 篇")
+
+        # 去重
+        seen_urls = set()
+        unique = []
+        for a in all_articles:
+            if a['url'] not in seen_urls:
+                seen_urls.add(a['url'])
+                unique.append(a)
+        print(f"[Fetcher] 赛道 {track['name']} 去重后共 {len(unique)} 篇")
+        return unique
     
     def fetch_article_content(self, url: str) -> str:
         """获取文章正文内容"""
@@ -267,17 +322,26 @@ class ArticleFetcher:
         
         return filepath
     
-    def fetch_all(self) -> List[Dict]:
-        """从所有配置的源抓取文章"""
+    def fetch_all(self, track_id: str = None) -> List[Dict]:
+        """从所有配置的源抓取文章
+
+        Args:
+            track_id: 可选，指定赛道 ID。使用赛道配置抓取。
+                     不指定时 fallback 到全局 RSS + 头条配置（兼容旧行为）。
+        """
+        # 如果指定了赛道，使用赛道配置
+        if track_id is not None:
+            return self.fetch_from_track(track_id)
+
+        # 兼容旧行为：全局抓取
         all_articles = []
-        
+
         # 抓取今日头条热榜
         if self.toutiao_enabled:
             for category in self.toutiao_categories:
                 articles = self.fetch_from_toutiao_hot(category)
-                # 封面图已直接在 API 中提取，不再重复抓取
                 all_articles.extend(articles)
-        
+
         # 抓取RSS源
         for url in self.urls:
             if not url.strip():
@@ -291,7 +355,7 @@ class ArticleFetcher:
                 article['body_images'] = images.get('images', [])
             all_articles.extend(articles)
             print(f"[Fetcher] 获取到 {len(articles)} 篇")
-        
+
         # 去重
         seen_urls = set()
         unique_articles = []
@@ -299,7 +363,7 @@ class ArticleFetcher:
             if a['url'] not in seen_urls:
                 seen_urls.add(a['url'])
                 unique_articles.append(a)
-        
+
         print(f"[Fetcher] 去重后共 {len(unique_articles)} 篇")
         return unique_articles
 

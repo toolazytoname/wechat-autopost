@@ -9,7 +9,7 @@ import re
 from typing import Dict, Optional
 
 class ArticleRewriter:
-    def __init__(self, config: dict):
+    def __init__(self, config: dict, track_manager=None):
         self.config = config
         self.ai_config = config.get('ai', {})
         self.rewrite_config = config.get('rewriter', {})
@@ -17,15 +17,22 @@ class ArticleRewriter:
         self.api_key = self.ai_config.get('api_key', '')
         self.api_base = self.ai_config.get('api_base', 'https://ark.cn-beijing.volces.com/api/coding/v3')
         self.model = self.ai_config.get('model', 'MiniMax-M2.7')
-        self.system_prompt = self.rewrite_config.get('system_prompt',
+        self.default_prompt = self.rewrite_config.get('system_prompt',
             '你是资深新媒体编辑，擅长将文章改写成符合中国读者阅读习惯的微信公众号爆款标题。你必须：1. 标题要像真人写的，有节奏感，不要直译或翻译腔 2. 可以用数字、反差对比、情绪共鸣、悬念等方式吸引点击 3. 保持8个汉字以内，严谨控制字数')
 
-    def rewrite(self, article: Dict) -> Optional[Dict]:
+        # 赛道管理器
+        if track_manager is None:
+            from track_manager import TrackManager
+            track_manager = TrackManager()
+        self.track_manager = track_manager
+
+    def rewrite(self, article: Dict, track_id: str = None) -> Optional[Dict]:
         """
         使用AI改写文章
 
         Args:
             article: 原始文章，包含 title, content, url 等
+            track_id: 可选，赛道 ID，用于加载赛道专属 prompt
 
         Returns:
             改写后的文章，包含 rewritten_title, rewritten_content 等
@@ -36,6 +43,14 @@ class ArticleRewriter:
         if not original_content:
             print(f"[Rewriter] 文章内容为空: {original_title}")
             return None
+
+        # 优先使用赛道专属 prompt
+        if track_id is None:
+            track_id = article.get('track_id')
+        if track_id:
+            system_prompt = self.track_manager.get_track_prompt(track_id) or self.default_prompt
+        else:
+            system_prompt = self.default_prompt
 
         user_prompt = (
             f"请改写以下文章的标题，生成一个适合微信公众号的爆款标题。\n\n"
@@ -65,7 +80,7 @@ class ArticleRewriter:
                 json={
                     "model": self.model,
                     "messages": [
-                        {"role": "system", "content": self.system_prompt},
+                        {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_prompt}
                     ],
                     "temperature": 0.7,

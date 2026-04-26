@@ -1,0 +1,38 @@
+{
+  "version": 1,
+  "active_track": "ai-tech",
+  "tracks": [
+    {
+      "id": "ai-tech",
+      "name": "AI科技前沿",
+      "enabled": true,
+      "description": "AI、大模型、科技产品、创业动态",
+      "feeds": [
+        {
+          "url": "https://36kr.com/feed",
+          "name": "36氪",
+          "enabled": true,
+          "max_articles_per_fetch": 10
+        },
+        {
+          "url": "https://techcrunch.com/feed/",
+          "name": "TechCrunch",
+          "enabled": true,
+          "max_articles_per_fetch": 5
+        },
+        {
+          "url": "https://rss.arxiv.org/rss/cs.CL",
+          "name": "arXiv NLP",
+          "enabled": true,
+          "max_articles_per_fetch": 5
+        }
+      ],
+      "rewriter_prompt": "你是微信公众号科技编辑，擅长将AI科技类内容改写成适合微信传播的快讯风格文章。你必须：\n\n1. 标题：像真人写的，有节奏感，不超过10个中文字。可以用数字（如\"3个新功能\"）、反差（如\"这么简单\"）、悬念等技巧。标题要完整一句话，不要省略号。\n\n2. 正文：口语化、接地气，800-1200字。把英文术语翻译成中文或加括号注释。段落短小，每段不超过3句话。干货要明确，可以用emoji点缀。不要翻译腔，像在跟朋友聊天。\n\n3. 结构：开头用一句话点明这件事为什么值得关注 → 中间3-5个要点展开 → 结尾一句话总结或留个悬念。不要长篇大论。",
+      "publish": {
+        "max_per_batch": 2,
+        "max_per_day": 4,
+        "publish_times": "08:00,20:00"
+      }
+    }
+  ]
+}

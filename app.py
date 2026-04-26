@@ -85,14 +85,207 @@ st.set_page_config(page_title="自媒体自动发布", page_icon="🤖", layout=
 # --- 侧边栏导航 ---
 page = st.sidebar.radio(
     "功能导航",
-    ["🧪 手动测试", "📊 状态监控", "⚙️ 配置管理", "📋 发布历史"],
+    ["🎯 赛道管理", "🧪 手动测试", "📊 状态监控", "⚙️ 配置管理", "📋 发布历史"],
     index=0
 )
 
 # ============================================================
+# 赛道管理页面
+# ============================================================
+if page == "🎯 赛道管理":
+    st.title("🎯 赛道管理")
+
+    import sys
+    import os
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from track_manager import TrackManager
+
+    tm = TrackManager()
+
+    # 初始化 session state
+    st.session_state.setdefault('selected_track_id', tm._data.get('active_track'))
+    st.session_state.setdefault('editing_track', None)
+
+    # 顶部：赛道切换 + 统计
+    all_tracks = tm.get_all_tracks()
+    active = tm.get_active_track()
+    enabled_tracks = tm.get_enabled_tracks()
+
+    col_stat1, col_stat2, col_stat3 = st.columns(3)
+    with col_stat1:
+        st.metric("总赛道数", len(all_tracks))
+    with col_stat2:
+        st.metric("已启用", len(enabled_tracks))
+    with col_stat3:
+        st.metric("当前活跃", active['name'] if active else '无')
+
+    st.markdown("---")
+
+    # 赛道选择下拉（用于查看/编辑）
+    if all_tracks:
+        track_options = {t['id']: f"{'✅ ' if t.get('enabled') else '❌ '}{t['name']}" for t in all_tracks}
+        selected = st.selectbox(
+            "选择赛道进行查看/编辑",
+            options=list(track_options.keys()),
+            format_func=lambda k: track_options[k],
+            key="track_selector"
+        )
+        st.session_state['selected_track_id'] = selected
+    else:
+        st.info("暂无赛道，请新增赛道")
+        selected = None
+
+    if selected:
+        track = tm.get_track(selected)
+        if track:
+            # ---- 赛道基本信息 ----
+            col1, col2 = st.columns([1, 1])
+            with col1:
+                new_name = st.text_input("赛道名称", value=track['name'], key="track_name")
+            with col2:
+                new_desc = st.text_input("赛道描述", value=track.get('description', ''), key="track_desc")
+            new_enabled = st.checkbox("✅ 启用此赛道", value=track.get('enabled', True), key="track_enabled")
+
+            # ---- 订阅源管理 ----
+            st.markdown("#### 📡 订阅源")
+            feeds = track.get('feeds', [])
+            feed_table = []
+            for f in feeds:
+                feed_table.append({
+                    "名称": f.get('name', ''),
+                    "URL": f['url'],
+                    "启用": "✅" if f.get('enabled', True) else "❌",
+                    "每次抓取上限": f.get('max_articles_per_fetch', 10)
+                })
+            if feed_table:
+                st.dataframe(feed_table, use_container_width=True)
+
+            # 添加订阅源
+            with st.expander("➕ 添加订阅源", expanded=False):
+                f_name = st.text_input("订阅源名称（如：36氪）", key="new_feed_name")
+                f_url = st.text_input("RSS 地址", key="new_feed_url")
+                f_limit = st.number_input("每次最多抓取篇数", value=10, min_value=1, max_value=50, key="new_feed_limit")
+                if st.button("添加订阅源", key="add_feed_btn"):
+                    if f_url and f_name:
+                        ok = tm.add_feed(selected, {
+                            "url": f_url,
+                            "name": f_name,
+                            "enabled": True,
+                            "max_articles_per_fetch": f_limit
+                        })
+                        if ok:
+                            st.success("订阅源已添加")
+                            st.rerun()
+                        else:
+                            st.error("该 URL 已存在")
+                    else:
+                        st.warning("请填写名称和地址")
+
+            # 删除订阅源
+            if feeds:
+                del_url = st.selectbox(
+                    "选择订阅源删除",
+                    options=[f['url'] for f in feeds],
+                    format_func=lambda u: next((f['name'] for f in feeds if f['url'] == u), u),
+                    key="del_feed_select"
+                )
+                if st.button("🗑️ 删除订阅源", key="del_feed_btn"):
+                    if tm.remove_feed(selected, del_url):
+                        st.success("订阅源已删除")
+                        st.rerun()
+
+            # ---- 发布策略 ----
+            st.markdown("#### 📤 发布策略")
+            pub = track.get('publish', {})
+            col_b1, col_b2, col_b3 = st.columns(3)
+            with col_b1:
+                max_batch = st.number_input("每批次最多发布", value=pub.get('max_per_batch', 2), min_value=1, max_value=10, key="pub_batch")
+            with col_b2:
+                max_day = st.number_input("每日最多发布", value=pub.get('max_per_day', 4), min_value=1, max_value=20, key="pub_day")
+            with col_b3:
+                pub_times = st.text_input("发布时间", value=pub.get('publish_times', '08:00,20:00'), key="pub_times")
+
+            # ---- 改写 Prompt ----
+            st.markdown("#### ✍️ AI 改写 Prompt")
+            current_prompt = track.get('rewriter_prompt', '')
+            new_prompt = st.text_area(
+                "赛道专属 Prompt",
+                value=current_prompt,
+                height=200,
+                help="为空则使用全局默认 Prompt",
+                key="rewriter_prompt_area"
+            )
+
+            st.markdown("---")
+            col_save, col_del, col_activate = st.columns([1, 1, 1])
+            with col_save:
+                if st.button("💾 保存修改", type="primary", use_container_width=True):
+                    updates = {
+                        'name': new_name,
+                        'description': new_desc,
+                        'enabled': new_enabled,
+                        'rewriter_prompt': new_prompt,
+                        'publish': {
+                            'max_per_batch': max_batch,
+                            'max_per_day': max_day,
+                            'publish_times': pub_times
+                        }
+                    }
+                    tm.update_track(selected, updates)
+                    st.success("赛道配置已保存")
+                    st.rerun()
+            with col_del:
+                if st.button("🗑️ 删除赛道", use_container_width=True):
+                    if tm.delete_track(selected):
+                        st.success("赛道已删除")
+                        st.rerun()
+            with col_activate:
+                if active and active['id'] == selected:
+                    st.info(f"⭐ 当前活跃")
+                else:
+                    if st.button("⭐ 设为活跃", use_container_width=True):
+                        tm.set_active_track(selected)
+                        st.success(f"已将「{new_name}」设为活跃赛道")
+                        st.rerun()
+
+    # ---- 新增赛道 ----
+    st.markdown("---")
+    with st.expander("➕ 新增赛道", expanded=False):
+        new_track_id = st.text_input("赛道 ID（英文/数字，唯一标识）", key="new_track_id")
+        new_track_name = st.text_input("赛道名称", key="new_track_name_input")
+        new_track_desc = st.text_input("赛道描述", key="new_track_desc_input")
+        if st.button("创建赛道", key="create_track_btn"):
+            if new_track_id and new_track_name:
+                # 检查ID合法性
+                import re
+                if not re.match(r'^[a-zA-Z0-9_-]+$', new_track_id):
+                    st.error("赛道 ID 只能包含字母、数字、下划线、连字符")
+                else:
+                    ok = tm.add_track({
+                        'id': new_track_id,
+                        'name': new_track_name,
+                        'description': new_track_desc,
+                        'enabled': True,
+                        'feeds': [],
+                        'rewriter_prompt': '',
+                        'publish': {
+                            'max_per_batch': 2,
+                            'max_per_day': 4,
+                            'publish_times': '08:00,20:00'
+                        }
+                    })
+                    if ok:
+                        st.success(f"赛道「{new_track_name}」已创建")
+                        st.rerun()
+                    else:
+                        st.error("赛道 ID 已存在")
+            else:
+                st.warning("赛道 ID 和名称必填")
+
+# ============================================================
 # 手动测试页面
 # ============================================================
-if page == "🧪 手动测试":
+elif page == "🧪 手动测试":
     st.title("🧪 手动测试")
 
     # 初始化 session state
@@ -115,14 +308,20 @@ if page == "🧪 手动测试":
     fetch_count = c2.number_input("抓取数量", value=5, min_value=1, max_value=20, step=1)
 
     if st.button("🔍 开始抓取", type="primary", use_container_width=True):
-        with st.spinner("正在抓取..."):
+        from track_manager import TrackManager
+        tm = TrackManager()
+        active_track = tm.get_active_track()
+        track_id = active_track['id'] if active_track else None
+        track_name = active_track['name'] if active_track else '全局'
+
+        with st.spinner(f"正在从「{track_name}」抓取..."):
             from fetcher import ArticleFetcher
-            fetcher = ArticleFetcher(config)
+            fetcher = ArticleFetcher(config, track_manager=tm)
             try:
                 if "头条" in fetch_source:
                     articles = fetcher.fetch_from_toutiao_hot('news_tech')
                 else:
-                    articles = fetcher.fetch_all()
+                    articles = fetcher.fetch_all(track_id=track_id)
                 articles = articles[:int(fetch_count)]
             except Exception as e:
                 articles = []
@@ -138,14 +337,17 @@ if page == "🧪 手动测试":
         st.success(f"✅ 抓取成功，共 {len(articles)} 篇文章")
 
         # 选择要改写的文章
-        article_titles = [f"[{a.get('source', 'rss')}] {a.get('title', '')[:50]}" for a in articles]
+        article_titles = [
+            f"[{a.get('feed_name', a.get('source', 'rss')[:20])}] {a.get('title', '')[:50]}"
+            for a in articles
+        ]
         selected_idx = st.selectbox("选择文章进行改写", range(len(article_titles)), format_func=lambda i: article_titles[i])
         st.session_state['selected_article_idx'] = selected_idx
 
         with st.expander("📄 抓取预览", expanded=False):
             sel = articles[selected_idx]
             st.markdown(f"**标题**: {sel.get('title', '无')}")
-            st.markdown(f"**来源**: {sel.get('source', 'rss')}")
+            st.markdown(f"**赛道**: {sel.get('track_name', '无')} / {sel.get('feed_name', sel.get('source', '无'))}")
             st.markdown(f"**URL**: {sel.get('url', '无')}")
             if sel.get('summary'):
                 st.markdown(f"**摘要**: {sel.get('summary', '')[:200]}...")
@@ -153,7 +355,11 @@ if page == "🧪 手动测试":
         # --- Step 2: AI 改写 ---
         st.markdown("### Step 2 · AI 改写")
         if st.button("✍️ 开始改写", type="primary", use_container_width=True, disabled=(st.session_state['step'] < 1)):
+            from track_manager import TrackManager
+            tm = TrackManager()
             sel_art = st.session_state['fetched_articles'][st.session_state['selected_article_idx']]
+            track_id = sel_art.get('track_id')
+
             with st.spinner("正在改写（耗时约10-20秒）..."):
                 from rewriter import ArticleRewriter
                 try:
@@ -170,8 +376,8 @@ if page == "🧪 手动测试":
                     if not sel_art.get('content') or len(sel_art.get('content', '')) < 50:
                         st.error("❌ 文章正文太短或抓取失败，跳过")
                     else:
-                        rewriter = ArticleRewriter(config)
-                        rewritten = rewriter.rewrite(sel_art)
+                        rewriter = ArticleRewriter(config, track_manager=tm)
+                        rewritten = rewriter.rewrite(sel_art, track_id=track_id)
                         if rewritten:
                             st.session_state['rewritten_article'] = rewritten
                             st.session_state['step'] = 2
