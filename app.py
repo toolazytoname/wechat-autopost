@@ -17,12 +17,59 @@ CONFIG_PATH = os.path.join(os.path.dirname(__file__), 'config.ini')
 
 
 def load_config() -> dict:
+    """加载配置，优先读取 Streamlit Secrets（云端），fallback 到本地 config.ini"""
+    import streamlit as st
+
+    # 优先用 Streamlit Cloud Secrets
+    if hasattr(st, 'secrets'):
+        try:
+            config = {}
+            # 微信
+            config['wechat'] = {
+                'app_id': st.secrets.get('WECHAT_APP_ID', ''),
+                'app_secret': st.secrets.get('WECHAT_APP_SECRET', ''),
+            }
+            # AI
+            config['ai'] = {
+                'api_base': st.secrets.get('ARK_API_BASE', 'https://ark.cn-beijing.volces.com/api/coding/v3'),
+                'api_key': st.secrets.get('ARK_API_KEY', ''),
+                'model': st.secrets.get('ARK_MODEL', 'doubao-seed-2-0-mini-260215'),
+            }
+            # RSS
+            config['feeds'] = {
+                'urls': st.secrets.get('RSS_URLS', 'https://www.appinn.com/feed/'),
+            }
+            # 头条
+            config['toutiao'] = {
+                'enabled': st.secrets.get('TOUTIAO_ENABLED', 'true'),
+                'categories': st.secrets.get('TOUTIAO_CATEGORIES', 'news_tech,news_finance'),
+                'max_count': st.secrets.get('TOUTIAO_MAX_COUNT', '20'),
+            }
+            # 发布
+            config['publish'] = {
+                'enabled_platforms': st.secrets.get('PUBLISH_PLATFORMS', 'wechat'),
+                'schedule_times': st.secrets.get('SCHEDULE_TIMES', '08:00,20:00'),
+                'max_articles_per_day': st.secrets.get('MAX_ARTICLES_PER_DAY', '2'),
+                'fetch_candidate_count': st.secrets.get('FETCH_CANDIDATE_COUNT', '10'),
+            }
+            # 存储
+            config['storage'] = {
+                'articles_dir': st.secrets.get('ARTICLES_DIR', './articles'),
+            }
+            return config
+        except Exception:
+            pass  # fallback 到本地文件
+
+    # 本地开发：从 config.ini 读取
     cfg = configparser.ConfigParser()
     cfg.read(CONFIG_PATH)
     return {s: dict(cfg.items(s)) for s in cfg.sections()}
 
 
 def save_config(config: dict):
+    """保存配置到本地 config.ini（云端不支持写入，仅供本地开发用）"""
+    if os.path.exists(CONFIG_PATH) and not os.access(CONFIG_PATH, os.W_OK):
+        return  # 云端只读，跳过
     cfg = configparser.ConfigParser()
     for section, items in config.items():
         cfg.add_section(section)
