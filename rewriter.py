@@ -5,6 +5,7 @@ AI洗稿器 - 使用MiniMax API改写文章
 
 import requests
 import json
+import re
 from typing import Dict, Optional
 
 class ArticleRewriter:
@@ -36,18 +37,16 @@ class ArticleRewriter:
             print(f"[Rewriter] 文章内容为空: {original_title}")
             return None
 
-        # 构建prompt
-        # 微信标题限制32字节（约8-9个中文字），必须严格控制
         user_prompt = (
             f"请改写以下文章的标题，生成一个适合微信公众号的爆款标题。\n\n"
             f"【原标题】\n{original_title}\n\n"
             f"【原文内容】\n{original_content[:2000]}\n\n"
             f"【标题改写要求】\n"
-            f"1. 字数：严格控制在6-8个汉字之间（不能少于6个，也不能多于8个）\n"
+            f"1. 字数：标题中中文字符严格控制在6-10个之间（英文/数字不计入），整体不超过16个字符\n"
             f"2. 语言风格：必须是地道的简体中文，像真人写的，不要翻译腔，不要逐字直译英文\n"
             f"3. 技巧：可以适当使用数字（如'3个技巧'）、反差对比（如'这么简单'）、情绪词（如'太绝了'）等吸引点击\n"
             f"4. 格式：标题必须是完整的一句话，有头有尾，不要用省略号结尾，不要被截断\n"
-            f"5. 禁止：不要用英文缩写/英文词，不要用生僻字，不要标题党过度夸张\n\n"
+            f"5. 禁止：不要用英文缩写/英文词（如iCloud），不要用生僻字，不要标题党过度夸张\n\n"
             f"【示例】（仅作参考，格式要严格按下面来）\n"
             f"【新标题】\n绝了！这个AI工具太强大\n"
             f"---\n"
@@ -82,7 +81,6 @@ class ArticleRewriter:
             result = response.json()
             rewritten_text = result['choices'][0]['message']['content']
 
-            # 解析改写结果
             return self._parse_rewritten(rewritten_text, article)
 
         except Exception as e:
@@ -94,75 +92,56 @@ class ArticleRewriter:
         new_title = original.get('title', '')
         new_content = text
 
-        import re
-
         # 尝试提取标题和正文
-        # 格式1: 【新标题】实际标题内容---正文
-        # 格式2: 【实际标题内容】---正文
-        # 格式3: 实际标题---正文
-
+        # 支持格式:
+        # 【新标题】标题内容
+        # ---
+        # 正文
         if '---' in text:
             parts = text.split('---', 1)
             before_dash = parts[0].strip()
             after_dash = parts[1].strip()
 
             # 提取标题
-            # 先检查是否有【新标题】标记
             if before_dash.startswith('【新标题】'):
-                # 格式1: 【新标题】标题---正文
+                # 【新标题】标题 或 【新标题】【标题】
                 title_text = before_dash[len('【新标题】'):].strip()
-                # 如果标题在【】中
                 title_match = re.search(r'【([^】]+)】', title_text)
-                if title_match:
-                    new_title = title_match.group(1).strip()
-                else:
-                    new_title = title_text
+                new_title = title_match.group(1).strip() if title_match else title_text
             else:
-                # 格式2或3: 【标题】---正文 或 标题---正文
+                # 【标题】 或 标题
                 title_match = re.search(r'【([^】]+)】', before_dash)
-                if title_match:
-                    new_title = title_match.group(1).strip()
-                elif before_dash:
-                    new_title = before_dash
+                new_title = title_match.group(1).strip() if title_match else before_dash
 
             new_content = after_dash
 
         # 清理标题中的引号
         new_title = new_title.strip('"').strip('"').strip()
 
-        # 限制标题长度：微信限制34字节（实测），超过会报错45003
-        # 使用智能截断，在自然断点处截断
+        # 限制标题字数：按中文字符数截断（不含英文/数字/符号）
+        # 中文字符范围：\u4e00-\u9fff
         try:
-            max_bytes = 32  # 留2字节余量
-            title_bytes = new_title.encode('utf-8')
-            if len(title_bytes) > max_bytes:
-                # 智能截断：在标点、顿号、逗号处截断
-                truncated = ''
-                current_bytes = 0
-                break_points = ['。', '！', '？', '，', '、', '"', '"', ''', ''']
-
-                for i, char in enumerate(new_title):
-                    char_bytes = len(char.encode('utf-8'))
-
-                    # 如果加上这个字符会超限
-                    if current_bytes + char_bytes > max_bytes:
-                        # 如果已经有内容，检查是否是好的截断点
-                        if truncated:
-                            # 在标点处截断是好的
-                            if truncated[-1] in break_points:
-                                break
-                            # 如果前一个字符是好的截断点，也截断
-                            if len(truncated) > 0:
-                                break
-                        break
-
-                    truncated += char
-                    current_bytes += char_bytes
-
-                new_title = truncated
-                print(f"[Rewriter] 标题过长，已智能截断: {new_title}")
-        except:
-            pass
+            def chinese_char_count(s):
+                return sum(1 for c in s if '\u4e00' <= c <= '\u9fff')
+            
+            c_count = chinese_char_count(new_title)
+            max_c_chars = 12  # 最多12个中文字
+            min_c_chars = 5   # 最少5个中文字（英文词可占字符但不计入中文数）
+            
+            if c_count > max_c_chars:
+                # 逐字遍历，找到第max_c_chars个中文字符的位置
+                count = 0
+                cut_idx = len(new_title)
+                for i, c in enumerate(new_title):
+                    if '\u4e00' <= c <= '\u9fff':
+                        count += 1
+                        if count == max_c_chars:
+                            cut_idx = i + 1
+                            break
+                new_title = new_title[:cut_idx]
+                print(f"[Rewriter] 标题已截断到{max_c_chars}个中文字: {new_title} ({c_count}字)")
+        except Exception as e:
+            print(f"[Rewriter] 标题截断失败: {e}")
 
         return {
             'original_title': original.get('title', ''),
@@ -174,7 +153,6 @@ class ArticleRewriter:
         }
 
 if __name__ == '__main__':
-    # 测试
     import configparser
     cfg = configparser.ConfigParser()
     cfg.read('config.ini')
@@ -182,7 +160,6 @@ if __name__ == '__main__':
 
     rewriter = ArticleRewriter(config)
 
-    # 测试文章
     test_article = {
         'title': '测试文章标题',
         'content': '这是测试文章的内容，我们想要改写这篇文章，使其更加吸引人。' * 20,
