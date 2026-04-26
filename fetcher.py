@@ -19,7 +19,82 @@ class ArticleFetcher:
         urls_str = config.get('feeds', {}).get('urls', '')
         self.urls = [u.strip() for u in urls_str.split(',') if u.strip()]
         self.articles_dir = config.get('storage', {}).get('articles_dir', './articles')
+        self.toutiao_config = config.get('toutiao', {})
+        self.toutiao_categories = [c.strip() for c in self.toutiao_config.get('categories', 'news_hot').split(',') if c.strip()]
+        self.toutiao_enabled = self.toutiao_config.get('enabled', 'false').lower() == 'true'
         os.makedirs(self.articles_dir, exist_ok=True)
+    
+    def fetch_from_toutiao_hot(self, category: str = 'news_hot') -> List[Dict]:
+        """从今日头条热榜抓取文章
+        
+        Args:
+            category: 热榜分类
+                - news_hot: 热点榜（默认）
+                - news_world: 国际
+                - news_finance: 财经
+                - news_tech: 科技
+                - news_sports: 体育
+                - news_ent: 娱乐
+                - news_game: 游戏
+        """
+        articles = []
+        try:
+            url = f"https://www.toutiao.com/api/pc/feed/?max_behot_time=0&tab_name={category}&category={category}"
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Referer': 'https://www.toutiao.com/',
+                'Accept': 'application/json, text/plain, */*',
+                'Accept-Language': 'zh-CN,zh;q=0.9',
+            }
+            resp = requests.get(url, headers=headers, timeout=15)
+            
+            if resp.status_code != 200:
+                print(f"[Fetcher] 头条热榜请求失败 HTTP {resp.status_code}: {category}")
+                return articles
+            
+            data = resp.json()
+            items = data.get('data', []) if isinstance(data, dict) else []
+            
+            max_count = int(self.toutiao_config.get('max_count', 20))
+            
+            for item in items[:max_count]:
+                if not item.get('title'):
+                    continue
+                
+                # 过滤视频内容（热榜大部分是视频，不适合图文平台）
+                if item.get('has_video') or item.get('tag_url', '').endswith('video'):
+                    continue
+                
+                group_id = item.get('group_id', '')
+                article_url = f"https://www.toutiao.com/article/{group_id}/"
+                
+                # 封面图：优先用 middle_image（大图），其次 image_url（小图）
+                cover_url = item.get('middle_image') or item.get('image_url', '')
+                if cover_url and cover_url.startswith('//'):
+                    cover_url = 'https:' + cover_url
+                
+                article = {
+                    'title': item.get('title', ''),
+                    'url': article_url,
+                    'summary': item.get('abstract', item.get('description', ''))[:500],
+                    'published': item.get('publish_time', datetime.now().isoformat()),
+                    'source': 'toutiao',
+                    'fetched_at': datetime.now().isoformat(),
+                    'chinese_tag': item.get('chinese_tag', category),
+                    'article_genre': item.get('article_genre', ''),
+                    'cover_image': cover_url if cover_url else None,
+                    'body_images': [],
+                }
+                articles.append(article)
+            
+            print(f"[Fetcher] 头条热榜({category})获取 {len(articles)} 篇")
+            
+        except requests.exceptions.RequestException as e:
+            print(f"[Fetcher] 头条热榜网络错误 {category}: {e}")
+        except (json.JSONDecodeError, KeyError, TypeError) as e:
+            print(f"[Fetcher] 头条热榜解析错误 {category}: {e}")
+        
+        return articles
     
     def fetch_from_rss(self, url: str) -> List[Dict]:
         """从RSS源获取文章列表"""
@@ -112,12 +187,12 @@ class ArticleFetcher:
             for img in imgs:
                 src = img.get('src') or img.get('data-src') or img.get('data-original')
                 if src and not src.startswith('data:'):
-                    # 过滤掉小图标和追踪像素
+                    # 过滤小图标：宽度小于100像素的跳过
                     width = img.get('width')
-                    if width and int(width) if width else 0 < 100:
+                    if width and (int(width) if width else 0) < 100:
                         continue
                     result['images'].append(src)
-                    if len(result['images']) >= 5:  # 最多5张图片
+                    if len(result['images']) >= 5:
                         break
             
             print(f"[Fetcher] 提取到封面图: {result['cover'] is not None}, 正文图片: {len(result['images'])}张")
@@ -126,7 +201,60 @@ class ArticleFetcher:
             print(f"[Fetcher] 图片提取失败 {url}: {e}")
         
         return result
-    
+
+    def fetch_toutiao_article_content(self, url: str, group_id: str = '') -> str:
+        """
+        获取头条文章正文（专门处理头条页面结构）
+        
+        优先用头条内链API获取原文内容，避免被重定向到登录页。
+        """
+        # 方法1: 尝试用 m.toutiao.com 移动版（通常不需要登录）
+        try:
+            mobile_url = url.replace('www.toutiao.com', 'm.toutiao.com')
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148 MicroMessenger/7.0.0.14(0x17000d2e) NetType/WIFI Language/zh_CN',
+                'Referer': 'https://m.toutiao.com/',
+            }
+            resp = requests.get(mobile_url, headers=headers, timeout=10)
+            if resp.status_code == 200 and len(resp.text) > 500:
+                soup = BeautifulSoup(resp.text, 'html.parser')
+                # 提取正文段落
+                content_div = soup.find('article') or soup.find('div', id='activity-name')
+                if content_div:
+                    paragraphs = content_div.find_all('p')
+                    if paragraphs:
+                        content = '\n'.join([p.get_text().strip() for p in paragraphs if p.get_text().strip()])
+                        if len(content) > 100:
+                            print(f"[Fetcher] 头条文章内容获取成功({len(content)}字)")
+                            return content[:3000]
+        except Exception as e:
+            print(f"[Fetcher] 头条移动版解析失败: {e}")
+        
+        # 方法2: 尝试抓取 group_id 对应的内容API
+        if group_id:
+            try:
+                content_url = f"https://www.toutiao.com/api/pc/article/{group_id}/"
+                headers = {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36',
+                    'Referer': 'https://www.toutiao.com/',
+                    'Accept': 'application/json, text/plain, */*',
+                }
+                resp = requests.get(content_url, headers=headers, timeout=10)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    content = data.get('data', {}).get('content', '')
+                    if content:
+                        soup = BeautifulSoup(content, 'html.parser')
+                        text = soup.get_text(separator='\n', strip=True)
+                        if len(text) > 100:
+                            print(f"[Fetcher] 头条内容API获取成功({len(text)}字)")
+                            return text[:3000]
+            except Exception as e:
+                print(f"[Fetcher] 头条内容API失败: {e}")
+        
+        # 方法3: 回退到通用网页抓取
+        return self.fetch_article_content(url)
+
     def save_article(self, article: Dict) -> str:
         """保存文章到本地"""
         # 用URL生成唯一ID
@@ -143,11 +271,24 @@ class ArticleFetcher:
         """从所有配置的源抓取文章"""
         all_articles = []
         
+        # 抓取今日头条热榜
+        if self.toutiao_enabled:
+            for category in self.toutiao_categories:
+                articles = self.fetch_from_toutiao_hot(category)
+                # 封面图已直接在 API 中提取，不再重复抓取
+                all_articles.extend(articles)
+        
+        # 抓取RSS源
         for url in self.urls:
             if not url.strip():
                 continue
             print(f"[Fetcher] 正在抓取: {url}")
             articles = self.fetch_from_rss(url)
+            # 补充图片信息
+            for article in articles:
+                images = self.fetch_article_images(article['url'])
+                article['cover_image'] = images.get('cover')
+                article['body_images'] = images.get('images', [])
             all_articles.extend(articles)
             print(f"[Fetcher] 获取到 {len(articles)} 篇")
         
