@@ -112,12 +112,12 @@ class ArticleFetcher:
             for img in imgs:
                 src = img.get('src') or img.get('data-src') or img.get('data-original')
                 if src and not src.startswith('data:'):
-                    # 过滤掉小图标和追踪像素
+                    # 过滤小图标：宽度小于100像素的跳过
                     width = img.get('width')
-                    if width and int(width) if width else 0 < 100:
+                    if width and (int(width) if width else 0) < 100:
                         continue
                     result['images'].append(src)
-                    if len(result['images']) >= 5:  # 最多5张图片
+                    if len(result['images']) >= 5:
                         break
             
             print(f"[Fetcher] 提取到封面图: {result['cover'] is not None}, 正文图片: {len(result['images'])}张")
@@ -148,6 +148,11 @@ class ArticleFetcher:
                 continue
             print(f"[Fetcher] 正在抓取: {url}")
             articles = self.fetch_from_rss(url)
+            # 补充图片信息
+            for article in articles:
+                images = self.fetch_article_images(article['url'])
+                article['cover_image'] = images.get('cover')
+                article['body_images'] = images.get('images', [])
             all_articles.extend(articles)
             print(f"[Fetcher] 获取到 {len(articles)} 篇")
         
