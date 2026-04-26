@@ -372,41 +372,41 @@ class WeChatPublisher:
     def _insert_images_into_content(self, content: str, images: List[str]) -> str:
         """
         将图片均匀插入到正文内容中。
-        按文本长度等分，每段末尾插入一张图片。
+        按句子（。！？）分割，在每个句子后插入下一张图片。
         """
         if not images or not content:
             return content
 
-        # 按自然段落分割（保留空行）
+        # 优先按段落分割（双换行符），fall back 到句子分割
         import re
-        # 用至少一个换行+空白来识别段落分隔
-        segments = re.split(r'(?<=\n)\s*\n', content)
-        # 过滤空段落
-        segments = [s for s in segments if s.strip()]
+        segments = re.split(r'(?<=[。！？])\s*', content)
+        segments = [s.strip() for s in segments if s.strip()]
         total_segs = len(segments)
 
         if total_segs == 0:
+            # 完全没有任何句子，直接追加
+            for img in images:
+                content += f'\n<img src="{img}" />\n'
             return content
 
-        # 在段间均匀插入图片
+        # 在句子间均匀插入图片
         result = []
         img_idx = 0
-        # 每个间隙平均分多少段
         gap = max(1, total_segs // (len(images) + 1))
 
         for i, seg in enumerate(segments):
             result.append(seg)
-            # 在每 gap 个段落后插入一张图片
+            # 每 gap 个句子的末尾插入一张图片
             if (i + 1) % gap == 0 and img_idx < len(images):
-                result.append(f'\n<img src="{images[img_idx]}" />\n')
+                result.append(f'<img src="{images[img_idx]}" />')
                 img_idx += 1
 
-        # 如果还有剩余图片没插完，追加到末尾
+        # 剩余图片追加到末尾
         while img_idx < len(images):
-            result.append(f'\n<img src="{images[img_idx]}" />\n')
+            result.append(f'<img src="{images[img_idx]}" />')
             img_idx += 1
 
-        return '\n'.join(result)
+        return ''.join(result)
     
     def _generate_article_images(self, title: str, content: str) -> List[str]:
         """
