@@ -417,9 +417,13 @@ class WeChatPublisher:
         # 调用图片生成脚本
         script_path = '/root/.openclaw/workspace/skills/image-generate/scripts/image_generate.py'
         output_dir = '/root/.openclaw/workspace/wechat-autopost/generated_images'
-        os.makedirs(output_dir, exist_ok=True)
+        
+        if not os.path.exists(script_path):
+            print(f"[Publisher] 图片生成脚本不存在，跳过AI配图")
+            return []
         
         try:
+            os.makedirs(output_dir, exist_ok=True)
             # 运行图片生成脚本，设置下载目录
             env = os.environ.copy()
             env['IMAGE_DOWNLOAD_DIR'] = output_dir
