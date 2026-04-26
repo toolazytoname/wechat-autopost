@@ -321,12 +321,8 @@ class WeChatPublisher:
         # 构建文章数据
         # 将正文图片插入到内容中（如果有多张图片）
         content = article.get('rewritten_content', article.get('content', ''))
-        
-        # 将Markdown转换为HTML
-        content = self._markdown_to_html(content)
-        
         body_images = article.get('body_images', [])
-        
+
         # 如果没有正文图片，使用AI生成配图
         if not body_images:
             print("[Publisher] 正在AI生成配图...")
@@ -334,15 +330,18 @@ class WeChatPublisher:
                 article.get('rewritten_title', ''),
                 article.get('rewritten_content', '')
             )
-        
+
         # 将外部图片URL上传到微信服务器（微信不支持外部图片）
         if body_images:
             body_images = self._upload_body_images_to_wechat(body_images)
-        
-        # 如果有正文图片，在合适的位置插入（每3-4段插入一张）
+
+        # 如果有正文图片，在合适的位置插入（先插图片，再转HTML）
         if body_images:
             content = self._insert_images_into_content(content, body_images)
             print(f"[Publisher] 已插入 {len(body_images)} 张配图")
+
+        # 将Markdown转换为HTML（图片已在内容中，用换行分隔）
+        content = self._markdown_to_html(content)
         
         article_data = {
             'title': article.get('rewritten_title', article.get('title', '无标题')),
@@ -372,26 +371,41 @@ class WeChatPublisher:
     
     def _insert_images_into_content(self, content: str, images: List[str]) -> str:
         """
-        将图片插入到正文内容中
-        每隔约3-4段插入一张图片，使用HTML img标签
+        将图片均匀插入到正文内容中。
+        按文本长度等分，每段末尾插入一张图片。
         """
-        if not images:
+        if not images or not content:
             return content
-        
-        # 将内容按段落分割
-        paragraphs = content.split('\n')
+
+        # 按自然段落分割（保留空行）
+        import re
+        # 用至少一个换行+空白来识别段落分隔
+        segments = re.split(r'(?<=\n)\s*\n', content)
+        # 过滤空段落
+        segments = [s for s in segments if s.strip()]
+        total_segs = len(segments)
+
+        if total_segs == 0:
+            return content
+
+        # 在段间均匀插入图片
         result = []
-        img_index = 0
-        images_per_insert = max(1, len(paragraphs) // (len(images) + 1))
-        
-        for i, para in enumerate(paragraphs):
-            result.append(para)
-            # 在适当位置插入图片
-            if (i + 1) % images_per_insert == 0 and img_index < len(images) and para.strip():
-                img_url = images[img_index]
-                result.append(f'\n<img src="{img_url}" />\n')
-                img_index += 1
-        
+        img_idx = 0
+        # 每个间隙平均分多少段
+        gap = max(1, total_segs // (len(images) + 1))
+
+        for i, seg in enumerate(segments):
+            result.append(seg)
+            # 在每 gap 个段落后插入一张图片
+            if (i + 1) % gap == 0 and img_idx < len(images):
+                result.append(f'\n<img src="{images[img_idx]}" />\n')
+                img_idx += 1
+
+        # 如果还有剩余图片没插完，追加到末尾
+        while img_idx < len(images):
+            result.append(f'\n<img src="{images[img_idx]}" />\n')
+            img_idx += 1
+
         return '\n'.join(result)
     
     def _generate_article_images(self, title: str, content: str) -> List[str]:
