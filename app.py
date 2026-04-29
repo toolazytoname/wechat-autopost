@@ -82,6 +82,118 @@ def save_config(config: dict):
 # --- 页面配置 ---
 st.set_page_config(page_title="自媒体自动发布", page_icon="🤖", layout="wide")
 
+# --- 移动端适配 CSS ---
+# 先添加viewport元标签，确保移动端正确缩放
+st.markdown("""
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+""", unsafe_allow_html=True)
+
+st.markdown("""
+<style>
+    /* 移动端全局优化 */
+    @media (max-width: 768px) {
+        /* 调整主容器内边距 */
+        .main .block-container {
+            padding-top: 1rem;
+            padding-left: 0.5rem;
+            padding-right: 0.5rem;
+        }
+        
+        /* 标题字体大小适配 */
+        h1 {
+            font-size: 1.5rem !important;
+        }
+        h2, h3, h4 {
+            font-size: 1.1rem !important;
+        }
+        
+        /* 按钮最小触摸尺寸（符合移动端标准48px） */
+        .stButton button {
+            min-height: 48px !important;
+            min-width: 48px !important;
+            font-size: 14px !important;
+            padding: 0.5rem 1rem !important;
+        }
+        
+        /* 输入框高度适配 */
+        .stTextInput input, .stNumberInput input, .stSelectbox select {
+            min-height: 44px !important;
+            font-size: 16px !important;  /* 防止iOS自动缩放 */
+        }
+        
+        /* 文本域高度 */
+        .stTextArea textarea {
+            font-size: 16px !important;
+        }
+        
+        /* DataFrame表格适配 */
+        .stDataFrame {
+            font-size: 12px !important;
+        }
+        
+        /* Metric卡片优化 */
+        [data-testid="stMetricValue"] {
+            font-size: 1.2rem !important;
+        }
+        [data-testid="stMetricLabel"] {
+            font-size: 0.8rem !important;
+        }
+        
+        /* Expander标题 */
+        .streamlit-expanderHeader {
+            font-size: 14px !important;
+        }
+        
+        /* Tabs标签页字体 */
+        .stTabs [role="tab"] {
+            font-size: 13px !important;
+            padding: 0.5rem 0.75rem !important;
+        }
+        
+        /* Checkbox和Radio按钮尺寸 */
+        .stCheckbox label, .stRadio label {
+            font-size: 14px !important;
+        }
+        
+        /* 侧边栏优化 */
+        [data-testid="stSidebar"] {
+            min-width: 250px !important;
+        }
+        [data-testid="stSidebarNav"] li {
+            font-size: 14px !important;
+        }
+        
+        /* 进度条文字 */
+        .stProgress > div > div > div {
+            font-size: 12px !important;
+        }
+        
+        /* 减少行间距 */
+        .element-container {
+            margin-bottom: 0.5rem !important;
+        }
+    }
+    
+    /* 超小屏幕（<480px）额外优化 */
+    @media (max-width: 480px) {
+        h1 {
+            font-size: 1.3rem !important;
+        }
+        
+        /* Metric在超小屏幕下垂直堆叠 */
+        [data-testid="metric-container"] {
+            width: 100% !important;
+        }
+        
+        /* 按钮文字换行 */
+        .stButton button {
+            white-space: normal !important;
+            line-height: 1.3 !important;
+        }
+    }
+</style>
+""", unsafe_allow_html=True)
+
 # --- 侧边栏导航 ---
 page = st.sidebar.radio(
     "功能导航",
@@ -165,7 +277,7 @@ if page == "🎯 赛道管理":
                 f_name = st.text_input("订阅源名称（如：36氪）", key="new_feed_name")
                 f_url = st.text_input("RSS 地址", key="new_feed_url")
                 f_limit = st.number_input("每次最多抓取篇数", value=10, min_value=1, max_value=50, key="new_feed_limit")
-                if st.button("添加订阅源", key="add_feed_btn"):
+                if st.button("添加订阅源", key="add_feed_btn", use_container_width=True):
                     if f_url and f_name:
                         ok = tm.add_feed(selected, {
                             "url": f_url,
@@ -189,7 +301,7 @@ if page == "🎯 赛道管理":
                     format_func=lambda u: next((f['name'] for f in feeds if f['url'] == u), u),
                     key="del_feed_select"
                 )
-                if st.button("🗑️ 删除订阅源", key="del_feed_btn"):
+                if st.button("🗑️ 删除订阅源", key="del_feed_btn", use_container_width=True):
                     if tm.remove_feed(selected, del_url):
                         st.success("订阅源已删除")
                         st.rerun()
@@ -278,7 +390,7 @@ if page == "🎯 赛道管理":
         new_track_id = st.text_input("赛道 ID（英文/数字，唯一标识）", key="new_track_id")
         new_track_name = st.text_input("赛道名称", key="new_track_name_input")
         new_track_desc = st.text_input("赛道描述", key="new_track_desc_input")
-        if st.button("创建赛道", key="create_track_btn"):
+        if st.button("创建赛道", key="create_track_btn", use_container_width=True):
             if new_track_id and new_track_name:
                 # 检查ID合法性
                 import re
@@ -844,7 +956,7 @@ elif page == "📱 账号管理":
                     st.markdown(f"**AppSecret**: `{'*' * 20 + account.get('app_secret', '')[-4:] if account.get('app_secret') else '未设置'}`")
 
                 # 测试按钮
-                if st.button("🔗 测试连接", key=f"test_{account['id']}"):
+                if st.button("🔗 测试连接", key=f"test_{account['id']}", use_container_width=True):
                     result = am.test_account(account['id'])
                     if result['success']:
                         st.success(f"✅ {result['message']}")
@@ -852,7 +964,7 @@ elif page == "📱 账号管理":
                         st.error(f"❌ {result['message']}")
 
                 # 删除按钮
-                if st.button("🗑️ 删除账号", key=f"del_{account['id']}"):
+                if st.button("🗑️ 删除账号", key=f"del_{account['id']}", use_container_width=True):
                     if am.delete_account(account['id']):
                         st.success("账号已删除")
                         st.rerun()
