@@ -197,9 +197,255 @@ st.markdown("""
 # --- 侧边栏导航 ---
 page = st.sidebar.radio(
     "功能导航",
-    ["🎯 赛道管理", "📱 账号管理", "🧪 手动测试", "📊 状态监控", "⚙️ 配置管理", "📋 发布历史"],
+    ["💡 灵感创作", "🎯 赛道管理", "📱 账号管理", "🧪 手动测试", "📊 状态监控", "⚙️ 配置管理", "📋 发布历史"],
     index=0
 )
+
+# ============================================================
+# 💡 灵感创作页面
+# ============================================================
+if page == "💡 灵感创作":
+    st.title("💡 灵感创作")
+    st.markdown("输入一段话或一个链接（支持多个来源混合），AI 将为你扩展生成一篇完整的图文文章")
+
+    config = load_config()
+
+    # 初始化 session state
+    st.session_state.setdefault('inspiration_items', [])
+    st.session_state.setdefault('generated_article', None)
+    st.session_state.setdefault('fetch_results', {})
+
+    # --- Step 1: 选择赛道 ---
+    st.markdown("### Step 1 · 选择赛道（可选）")
+    from track_manager import TrackManager
+    tm = TrackManager()
+    all_tracks = tm.get_all_tracks()
+
+    if all_tracks:
+        track_options = {t['id']: t['name'] for t in all_tracks}
+        track_options[''] = '不绑定赛道（通用风格）'
+        selected_track = st.selectbox(
+            "选择内容赛道",
+            options=[''] + [t['id'] for t in all_tracks],
+            format_func=lambda k: track_options.get(k, k),
+            key="inspiration_track"
+        )
+    else:
+        selected_track = None
+        st.info("暂无赛道，将使用通用创作风格")
+
+    st.markdown("---")
+
+    # --- Step 2: 输入灵感来源 ---
+    st.markdown("### Step 2 · 添加灵感来源（支持多个）")
+
+    col_input_type, col_input = st.columns([1, 4])
+    with col_input_type:
+        input_type = st.radio("添加方式", ["🔗 链接", "✍️ 文字"], horizontal=True)
+
+    with col_input:
+        if input_type == "🔗 链接":
+            new_url = st.text_input("输入参考文章链接，按回车添加", key="new_url_input")
+            if new_url and new_url.strip():
+                if new_url not in [item['content'] for item in st.session_state['inspiration_items'] if item['type'] == 'url']:
+                    st.session_state['inspiration_items'].append({
+                        'type': 'url',
+                        'content': new_url.strip(),
+                        'title': '',
+                        'preview': ''
+                    })
+                    st.rerun()
+        else:
+            new_text = st.text_area("输入灵感文字，点击按钮添加", height=100, key="new_text_input")
+            if st.button("➕ 添加文字灵感", use_container_width=True):
+                if new_text and new_text.strip():
+                    st.session_state['inspiration_items'].append({
+                        'type': 'text',
+                        'content': new_text.strip(),
+                        'title': f'文字灵感 #{len(st.session_state["inspiration_items"]) + 1}',
+                        'preview': new_text.strip()[:100] + '...'
+                    })
+                    st.rerun()
+
+    # 显示已添加的灵感来源
+    if st.session_state['inspiration_items']:
+        st.markdown("#### 📋 已添加的灵感来源")
+        for idx, item in enumerate(st.session_state['inspiration_items']):
+            col_item, col_del = st.columns([8, 1])
+            with col_item:
+                if item['type'] == 'url':
+                    icon = "🔗"
+                    title = item.get('title', item['content'])
+                    preview = item.get('preview', '')
+                    if not preview and item['content'] in st.session_state.get('fetch_results', {}):
+                        result = st.session_state['fetch_results'][item['content']]
+                        if result:
+                            item['title'] = result.get('title', item['content'])
+                            item['preview'] = result.get('content', '')[:200] + '...'
+                    st.info(f"{icon} **{title}**\n\n{item['content']}\n\n{preview[:200] if preview else ''}")
+                else:
+                    st.info(f"✍️ **{item['title']}**\n\n{item['preview']}")
+            with col_del:
+                if st.button("🗑️", key=f"del_insp_{idx}", help="删除此项"):
+                    st.session_state['inspiration_items'].pop(idx)
+                    st.rerun()
+
+        if st.button("🔍 预抓取所有链接", type="secondary", use_container_width=True):
+            with st.spinner("正在抓取网页内容..."):
+                for item in st.session_state['inspiration_items']:
+                    if item['type'] == 'url' and item['content'] not in st.session_state['fetch_results']:
+                        from inspiration_generator import InspirationGenerator
+                        generator = InspirationGenerator(config)
+                        result = generator.fetch_url_content(item['content'])
+                        st.session_state['fetch_results'][item['content']] = result
+                        if result:
+                            item['title'] = result.get('title', item['content'])
+                            item['preview'] = result.get('content', '')[:200] + '...'
+                st.rerun()
+
+    st.markdown("---")
+
+    # --- Step 3: 设置文章风格 ---
+    st.markdown("### Step 3 · 设置文章风格")
+
+    col_style, col_length = st.columns(2)
+    with col_style:
+        article_style = st.selectbox(
+            "文章风格",
+            options=["专业深度", "轻松幽默", "干货实用", "情感共鸣"],
+            index=0
+        )
+    with col_length:
+        article_length = st.select_slider(
+            "文章长度",
+            options=["short", "medium", "long"],
+            value="medium",
+            format_func=lambda x: {"short": "短篇 (~1000字)", "medium": "中篇 (~1500字)", "long": "长篇 (~2500字)"}[x]
+        )
+
+    # 生成按钮
+    can_generate = len(st.session_state['inspiration_items']) > 0
+    generate_btn = st.button(
+        "✨ AI 开始创作",
+        type="primary",
+        disabled=not can_generate,
+        use_container_width=True
+    )
+
+    if generate_btn and can_generate:
+        with st.spinner("AI 正在阅读灵感素材并创作中，请稍候..."):
+            from inspiration_generator import InspirationGenerator
+            generator = InspirationGenerator(config)
+
+            # 收集所有灵感素材
+            all_sources = []
+            for item in st.session_state['inspiration_items']:
+                if item['type'] == 'url':
+                    # 先抓取链接（如果还没抓取）
+                    if item['content'] in st.session_state['fetch_results']:
+                        result = st.session_state['fetch_results'][item['content']]
+                        if result:
+                            all_sources.append(f"【参考文章 {len(all_sources)+1}】\n标题：{result['title']}\n内容：{result['content']}\n来源：{result['url']}")
+                    else:
+                        result = generator.fetch_url_content(item['content'])
+                        if result:
+                            all_sources.append(f"【参考文章 {len(all_sources)+1}】\n标题：{result['title']}\n内容：{result['content']}\n来源：{result['url']}")
+                else:
+                    all_sources.append(f"【灵感素材 {len(all_sources)+1}】\n{item['content']}")
+
+            if all_sources:
+                combined_sources = "\n\n".join(all_sources)
+                # 调用AI生成（使用文本方式，因为已经整合了所有来源）
+                result = generator.generate_from_text(
+                    combined_sources,
+                    track_id=selected_track if selected_track else None,
+                    style=article_style,
+                    length=article_length
+                )
+                if result:
+                    st.session_state['generated_article'] = result
+                    st.success("🎉 文章生成成功！")
+                else:
+                    st.error("❌ 文章生成失败，请检查 API 配置")
+            else:
+                st.error("❌ 未能获取到有效灵感素材，请检查输入")
+
+    st.markdown("---")
+
+    # --- Step 4: 显示生成结果 ---
+    if st.session_state['generated_article']:
+        article = st.session_state['generated_article']
+
+        st.markdown("### Step 4 · 生成结果")
+
+        # 标题
+        st.subheader(f"📝 {article['rewritten_title']}")
+
+        # 摘要
+        if article.get('summary'):
+            st.markdown(f"**摘要**：{article['summary']}")
+
+        # 正文
+        with st.expander("📖 查看完整文章", expanded=True):
+            st.markdown(article['rewritten_content'])
+
+        # 配图建议
+        if article.get('image_suggestions'):
+            st.markdown("#### 🖼️ 配图建议")
+            for img_suggest in article['image_suggestions']:
+                st.write(f"- {img_suggest}")
+
+        # 关键词
+        if article.get('keywords'):
+            st.markdown(f"**关键词**：{', '.join(article['keywords'])}")
+
+        st.markdown("---")
+
+        # --- Step 5: 发布到微信 ---
+        st.markdown("### Step 5 · 发布到微信")
+
+        # 获取文章关联的赛道账号
+        track_account_id = None
+        if selected_track:
+            track = tm.get_track(selected_track)
+            if track:
+                track_account_id = track.get('publish', {}).get('account_id', '')
+                if track_account_id:
+                    from account_manager import AccountManager
+                    am = AccountManager()
+                    account = am.get_account(track_account_id)
+                    if account:
+                        st.info(f"📌 将发布到赛道绑定账号: **{account.get('name', '未知账号')}**")
+                    else:
+                        st.warning("⚠️ 赛道绑定的账号不存在，将使用全局配置")
+                else:
+                    st.warning("⚠️ 赛道未绑定账号，将使用全局配置")
+
+        if st.button("📤 发布到微信公众号草稿箱", type="primary", use_container_width=True):
+            with st.spinner("正在发布..."):
+                from publisher import WeChatPublisher
+                try:
+                    publisher = WeChatPublisher(config, account_id=track_account_id)
+                    success = publisher.publish_article(article)
+                    if success:
+                        st.success("🎉 发布成功！请到微信公众号后台草稿箱查看")
+                    else:
+                        st.error("❌ 发布失败，请检查日志")
+                except Exception as e:
+                    st.error(f"发布异常: {e}")
+
+        # 清空结果
+        if st.button("🗑️ 清空结果", use_container_width=True):
+            st.session_state['generated_article'] = None
+            st.rerun()
+
+    # 清空所有灵感来源
+    if st.button("🆕 清空全部，重新开始", use_container_width=True):
+        st.session_state['inspiration_items'] = []
+        st.session_state['generated_article'] = None
+        st.session_state['fetch_results'] = {}
+        st.rerun()
+
 
 # ============================================================
 # 赛道管理页面
