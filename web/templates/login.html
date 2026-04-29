@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>自动发文系统 - 登录</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: '#165DFF',
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            -webkit-font-smoothing: antialiased;
+        }
+        .safe-area-top {
+            padding-top: env(safe-area-inset-top, 20px);
+        }
+        .safe-area-bottom {
+            padding-bottom: env(safe-area-inset-bottom, 20px);
+        }
+    </style>
+</head>
+<body class="bg-gradient-to-br from-blue-50 to-indigo-100 min-h-screen flex items-center justify-center p-4 safe-area-top safe-area-bottom">
+    <div class="w-full max-w-md">
+        <!-- Logo -->
+        <div class="text-center mb-8">
+            <div class="w-20 h-20 bg-primary rounded-2xl mx-auto mb-4 flex items-center justify-center shadow-lg">
+                <svg class="w-10 h-10 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path>
+                </svg>
+            </div>
+            <h1 class="text-2xl font-bold text-gray-800">自动发文系统</h1>
+            <p class="text-gray-500 mt-2">AI 驱动 · 多平台发布 · 随时随地</p>
+        </div>
+
+        <!-- 登录卡片 -->
+        <div class="bg-white rounded-2xl shadow-xl p-6">
+            <form id="loginForm" class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">用户名</label>
+                    <input 
+                        type="text" 
+                        id="username" 
+                        name="username"
+                        class="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-primary focus:border-transparent outline-none transition-all text-lg"
+                        placeholder="请输入用户名"
+                        value="admin"
+                    >
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">密码</label>
+                    <input 
+                        type="password" 
+                        id="password"
+                        name="password" 
+                        class="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-primary focus:border-transparent outline-none transition-all text-lg"
+                        placeholder="请输入密码"
+                        value="admin123"
+                    >
+                </div>
+
+                <button 
+                    type="submit" 
+                    id="loginBtn"
+                    class="w-full bg-primary text-white py-4 rounded-xl font-medium text-lg shadow-lg shadow-primary/30 active:scale-98 transition-all hover:bg-primary/90"
+                >
+                    登 录
+                </button>
+            </form>
+
+            <!-- 提示信息 -->
+            <div class="mt-6 p-4 bg-blue-50 rounded-xl">
+                <p class="text-sm text-blue-600">
+                    💡 默认账号：admin / admin123
+                    <br>
+                    可通过环境变量 ADMIN_USERNAME / ADMIN_PASSWORD 自定义
+                </p>
+            </div>
+        </div>
+
+        <!-- 底部 -->
+        <p class="text-center text-gray-400 text-sm mt-8">
+            © 2024 自动发文系统 · Vercel 部署
+        </p>
+    </div>
+
+    <!-- Toast 提示 -->
+    <div id="toast" class="fixed top-4 left-1/2 transform -translate-x-1/2 bg-gray-800 text-white px-6 py-3 rounded-full shadow-lg opacity-0 transition-opacity duration-300 pointer-events-none z-50">
+        <span id="toastMessage"></span>
+    </div>
+
+    <script>
+        // Toast 提示函数
+        function showToast(message, isError = false) {
+            const toast = document.getElementById('toast');
+            const toastMessage = document.getElementById('toastMessage');
+            toastMessage.textContent = message;
+            toast.className = `fixed top-4 left-1/2 transform -translate-x-1/2 px-6 py-3 rounded-full shadow-lg transition-opacity duration-300 z-50 ${isError ? 'bg-red-500' : 'bg-gray-800'} text-white`;
+            toast.style.opacity = '1';
+            setTimeout(() => {
+                toast.style.opacity = '0';
+            }, 3000);
+        }
+
+        // 登录表单处理
+        document.getElementById('loginForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const btn = document.getElementById('loginBtn');
+            const username = document.getElementById('username').value;
+            const password = document.getElementById('password').value;
+
+            btn.disabled = true;
+            btn.textContent = '登录中...';
+
+            try {
+                const formData = new FormData();
+                formData.append('username', username);
+                formData.append('password', password);
+
+                const response = await fetch('/api/login', {
+                    method: 'POST',
+                    body: formData
+                });
+                const data = await response.json();
+
+                if (data.success) {
+                    showToast('登录成功！');
+                    setTimeout(() => {
+                        window.location.href = data.redirect || '/dashboard';
+                    }, 500);
+                } else {
+                    showToast(data.message || '登录失败', true);
+                }
+            } catch (error) {
+                showToast('网络错误，请重试', true);
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '登 录';
+            }
+        });
+    </script>
+</body>
+</html>

@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>灵感创作 - 自动发文系统</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: '#165DFF',
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            -webkit-font-smoothing: antialiased;
+        }
+        .safe-area-top {
+            padding-top: env(safe-area-inset-top, 0px);
+        }
+        .safe-area-bottom {
+            padding-bottom: env(safe-area-inset-bottom, 20px);
+        }
+        .line-clamp-3 {
+            display: -webkit-box;
+            -webkit-line-clamp: 3;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+        }
+    </style>
+</head>
+<body class="bg-gray-50 min-h-screen safe-area-bottom" x-data="inspirationApp()">
+    <!-- 顶部导航 -->
+    <header class="bg-white shadow-sm sticky top-0 z-40 safe-area-top">
+        <div class="flex items-center justify-between px-4 py-4">
+            <button @click="window.location.href = '/dashboard'" class="text-gray-500 hover:text-gray-700">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"></path>
+                </svg>
+            </button>
+            <div class="text-center">
+                <h1 class="text-lg font-bold text-gray-800">💡 灵感创作</h1>
+                <p class="text-xs text-gray-500">多来源整合 · AI 扩写</p>
+            </div>
+            <button @click="resetAll" class="text-gray-500 hover:text-red-500 text-sm">
+                重置
+            </button>
+        </div>
+    </header>
+
+    <!-- 主内容区 -->
+    <main class="px-4 py-4 space-y-4 max-w-lg mx-auto pb-24">
+        <!-- 灵感来源列表 -->
+        <div class="space-y-3">
+            <template x-for="(source, index) in sources" :key="index">
+                <div class="bg-white rounded-xl p-4 shadow-sm">
+                    <div class="flex items-start justify-between">
+                        <div class="flex-1 min-w-0">
+                            <div class="flex items-center space-x-2 mb-1">
+                                <span class="text-xs px-2 py-0.5 rounded-full"
+                                    :class="source.type === 'url' ? 'bg-blue-100 text-blue-600' : 'bg-yellow-100 text-yellow-600'">
+                                    <span x-text="source.type === 'url' ? '🔗 链接' : '✍️ 文字'"></span>
+                                </span>
+                                <span class="text-xs text-gray-400" x-show="source.title" x-text="source.title"></span>
+                            </div>
+                            <p class="text-sm text-gray-600 line-clamp-3" x-text="source.preview || source.content"></p>
+                        </div>
+                        <button @click="removeSource(index)" class="ml-3 text-gray-400 hover:text-red-500">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+            </template>
+        </div>
+
+        <!-- 添加灵感来源 -->
+        <div class="bg-white rounded-xl p-4 shadow-sm">
+            <div class="flex space-x-2 mb-3">
+                <button @click="inputType = 'url'" 
+                    :class="inputType === 'url' ? 'bg-blue-50 text-blue-600 border-blue-200' : 'bg-gray-50 text-gray-500 border-gray-200'"
+                    class="flex-1 py-2 px-4 rounded-lg border text-sm font-medium transition-colors">
+                    🔗 链接
+                </button>
+                <button @click="inputType = 'text'" 
+                    :class="inputType === 'text' ? 'bg-yellow-50 text-yellow-600 border-yellow-200' : 'bg-gray-50 text-gray-500 border-gray-200'"
+                    class="flex-1 py-2 px-4 rounded-lg border text-sm font-medium transition-colors">
+                    ✍️ 文字
+                </button>
+            </div>
+
+            <template x-if="inputType === 'url'">
+                <div>
+                    <input 
+                        type="url" 
+                        x-model="newUrl"
+                        @keydown.enter="addUrl"
+                        placeholder="粘贴文章链接，按回车添加"
+                        class="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-primary focus:border-transparent outline-none text-sm"
+                    >
+                    <button @click="addUrl" class="w-full mt-3 py-2 bg-blue-50 text-blue-600 rounded-lg text-sm font-medium hover:bg-blue-100 transition-colors">
+                        + 添加链接
+                    </button>
+                </div>
+            </template>
+
+            <template x-if="inputType === 'text'">
+                <div>
+                    <textarea 
+                        x-model="newText"
+                        rows="3"
+                        placeholder="输入灵感文字..."
+                        class="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-primary focus:border-transparent outline-none text-sm resize-none"
+                    ></textarea>
+                    <button @click="addText" class="w-full mt-3 py-2 bg-yellow-50 text-yellow-600 rounded-lg text-sm font-medium hover:bg-yellow-100 transition-colors">
+                        + 添加文字
+                    </button>
+                </div>
+            </template>
+        </div>
+
+        <!-- 创作设置 -->
+        <div class="bg-white rounded-xl p-4 shadow-sm">
+            <h3 class="font-medium text-gray-800 mb-3">⚙️ 创作设置</h3>
+            <div class="space-y-3">
+                <div>
+                    <label class="text-sm text-gray-600 mb-1 block">文章风格</label>
+                    <select x-model="style" class="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-primary focus:border-transparent outline-none">
+                        <option value="专业深度">专业深度</option>
+                        <option value="轻松幽默">轻松幽默</option>
+                        <option value="干货实用">干货实用</option>
+                        <option value="情感共鸣">情感共鸣</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="text-sm text-gray-600 mb-1 block">文章长度</label>
+                    <select x-model="length" class="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-primary focus:border-transparent outline-none">
+                        <option value="short">短篇 (~1000字)</option>
+                        <option value="medium">中篇 (~1500字)</option>
+                        <option value="long">长篇 (~2500字)</option>
+                    </select>
+                </div>
+            </div>
+        </div>
+
+        <!-- 生成按钮 -->
+        <button 
+            @click="generateArticle"
+            :disabled="sources.length === 0 || isGenerating"
+            class="w-full py-4 bg-primary text-white rounded-xl font-medium shadow-lg shadow-primary/30 disabled:opacity-50 disabled:cursor-not-allowed active:scale-98 transition-all">
+            <span x-show="!isGenerating">✨ AI 开始创作</span>
+            <span x-show="isGenerating" class="flex items-center justify-center">
+                <svg class="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                AI 创作中...
+            </span>
+        </button>
+
+        <!-- 生成结果 -->
+        <template x-if="generatedArticle">
+            <div class="bg-white rounded-xl p-5 shadow-sm">
+                <div class="flex items-center justify-between mb-4">
+                    <h3 class="font-bold text-gray-800">📝 生成结果</h3>
+                    <span class="text-xs px-2 py-1 bg-green-100 text-green-600 rounded-full">生成成功</span>
+                </div>
+
+                <div class="space-y-4">
+                    <div>
+                        <h4 class="text-lg font-bold text-gray-800" x-text="generatedArticle.title"></h4>
+                        <p class="text-sm text-gray-500 mt-1" x-text="generatedArticle.summary"></p>
+                    </div>
+
+                    <div class="bg-gray-50 rounded-xl p-4 max-h-96 overflow-y-auto">
+                        <p class="text-sm text-gray-700 whitespace-pre-wrap leading-relaxed" x-text="generatedArticle.content"></p>
+                    </div>
+
+                    <template x-if="generatedArticle.images && generatedArticle.images.length > 0">
+                        <div>
+                            <h5 class="text-sm font-medium text-gray-700 mb-2">🖼️ 配图建议</h5>
+                            <ul class="space-y-1">
+                                <template x-for="(img, i) in generatedArticle.images" :key="i">
+                                    <li class="text-sm text-gray-600 pl-4 relative">
+                                        <span class="absolute left-0">•</span>
+                                        <span x-text="img"></span>
+                                    </li>
+                                </template>
+                            </ul>
+                        </div>
+                    </template>
+
+                    <template x-if="generatedArticle.keywords">
+                        <div class="flex flex-wrap gap-2">
+                            <template x-for="(keyword, i) in generatedArticle.keywords.split(',')" :key="i">
+                                <span class="text-xs px-2 py-1 bg-blue-100 text-blue-600 rounded-full" x-text="keyword.trim()"></span>
+                            </template>
+                        </div>
+                    </template>
+
+                    <button @click="publishToWechat" class="w-full py-3 bg-green-600 text-white rounded-xl font-medium shadow-lg shadow-green-600/20">
+                        📤 发布到微信草稿箱
+                    </button>
+                </div>
+            </div>
+        </template>
+    </main>
+
+    <!-- Toast 提示 -->
+    <div id="toast" class="fixed top-4 left-1/2 transform -translate-x-1/2 bg-gray-800 text-white px-6 py-3 rounded-full shadow-lg opacity-0 transition-opacity duration-300 pointer-events-none z-50">
+        <span id="toastMessage"></span>
+    </div>
+
+    <script>
+        function inspirationApp() {
+            return {
+                inputType: 'url',
+                newUrl: '',
+                newText: '',
+                style: '专业深度',
+                length: 'medium',
+                sources: [],
+                isGenerating: false,
+                generatedArticle: null,
+
+                addUrl() {
+                    if (!this.newUrl || !this.newUrl.trim()) return;
+                    this.sources.push({
+                        type: 'url',
+                        content: this.newUrl.trim(),
+                        title: '',
+                        preview: ''
+                    });
+                    this.newUrl = '';
+                    this.showToast('链接已添加');
+                },
+
+                addText() {
+                    if (!this.newText || !this.newText.trim()) return;
+                    this.sources.push({
+                        type: 'text',
+                        content: this.newText.trim(),
+                        title: '文字灵感',
+                        preview: this.newText.trim().substring(0, 100) + '...'
+                    });
+                    this.newText = '';
+                    this.showToast('文字已添加');
+                },
+
+                removeSource(index) {
+                    this.sources.splice(index, 1);
+                },
+
+                async generateArticle() {
+                    if (this.sources.length === 0) return;
+
+                    this.isGenerating = true;
+                    this.generatedArticle = null;
+
+                    try {
+                        const formData = new FormData();
+                        formData.append('sources', JSON.stringify(this.sources));
+                        formData.append('style', this.style);
+                        formData.append('length', this.length);
+
+                        const response = await fetch('/api/inspiration/generate', {
+                            method: 'POST',
+                            body: formData
+                        });
+                        const data = await response.json();
+
+                        if (data.success) {
+                            this.generatedArticle = {
+                                title: data.data.rewritten_title,
+                                summary: data.data.summary || '',
+                                content: data.data.rewritten_content,
+                                images: data.data.image_suggestions || [],
+                                keywords: data.data.keywords || ''
+                            };
+                            this.showToast('🎉 文章生成成功！');
+                        } else {
+                            this.showToast('生成失败：' + (data.message || '未知错误'), true);
+                        }
+                    } catch (error) {
+                        this.showToast('网络错误，请重试', true);
+                    } finally {
+                        this.isGenerating = false;
+                    }
+                },
+
+                async publishToWechat() {
+                    this.showToast('📤 正在发布到微信...');
+                    // 待实现发布逻辑
+                    setTimeout(() => {
+                        this.showToast('✅ 发布成功！请到微信后台查看');
+                    }, 2000);
+                },
+
+                resetAll() {
+                    this.sources = [];
+                    this.generatedArticle = null;
+                    this.newUrl = '';
+                    this.newText = '';
+                },
+
+                showToast(message, isError = false) {
+                    const toast = document.getElementById('toast');
+                    const toastMessage = document.getElementById('toastMessage');
+                    toastMessage.textContent = message;
+                    toast.className = `fixed top-4 left-1/2 transform -translate-x-1/2 px-6 py-3 rounded-full shadow-lg transition-opacity duration-300 z-50 ${isError ? 'bg-red-500' : 'bg-gray-800'} text-white`;
+                    toast.style.opacity = '1';
+                    setTimeout(() => {
+                        toast.style.opacity = '0';
+                    }, 3000);
+                }
+            }
+        }
+    </script>
+</body>
+</html>
