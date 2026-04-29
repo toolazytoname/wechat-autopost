@@ -85,7 +85,7 @@ st.set_page_config(page_title="自媒体自动发布", page_icon="🤖", layout=
 # --- 侧边栏导航 ---
 page = st.sidebar.radio(
     "功能导航",
-    ["🎯 赛道管理", "🧪 手动测试", "📊 状态监控", "⚙️ 配置管理", "📋 发布历史"],
+    ["🎯 赛道管理", "📱 账号管理", "🧪 手动测试", "📊 状态监控", "⚙️ 配置管理", "📋 发布历史"],
     index=0
 )
 
@@ -197,6 +197,29 @@ if page == "🎯 赛道管理":
             # ---- 发布策略 ----
             st.markdown("#### 📤 发布策略")
             pub = track.get('publish', {})
+
+            # 发布账号选择
+            from account_manager import AccountManager
+            am = AccountManager()
+            wechat_accounts = am.get_wechat_accounts()
+            if wechat_accounts:
+                account_options = {a['id']: a['name'] for a in wechat_accounts}
+                current_account = pub.get('account_id', '')
+                # 确保当前账号在选项中
+                if current_account and current_account not in account_options:
+                    account_options[current_account] = f"{current_account} (已删除)"
+                selected_account = st.selectbox(
+                    "发布账号",
+                    options=list(account_options.keys()),
+                    format_func=lambda k: account_options[k],
+                    index=list(account_options.keys()).index(current_account) if current_account in account_options else 0,
+                    key=f"account_select_{track['id']}"
+                )
+                pub['account_id'] = selected_account
+            else:
+                st.warning("⚠️ 暂无可用账号，请先到「账号管理」页面添加")
+                pub['account_id'] = ''
+
             col_b1, col_b2, col_b3 = st.columns(3)
             with col_b1:
                 max_batch = st.number_input("每批次最多发布", value=pub.get('max_per_batch', 2), min_value=1, max_value=10, key="pub_batch")
@@ -228,7 +251,8 @@ if page == "🎯 赛道管理":
                         'publish': {
                             'max_per_batch': max_batch,
                             'max_per_day': max_day,
-                            'publish_times': pub_times
+                            'publish_times': pub_times,
+                            'account_id': pub.get('account_id', '')
                         }
                     }
                     tm.update_track(selected, updates)
@@ -261,6 +285,12 @@ if page == "🎯 赛道管理":
                 if not re.match(r'^[a-zA-Z0-9_-]+$', new_track_id):
                     st.error("赛道 ID 只能包含字母、数字、下划线、连字符")
                 else:
+                    # 默认选择第一个可用账号
+                    from account_manager import AccountManager
+                    am = AccountManager()
+                    wechat_accounts = am.get_wechat_accounts()
+                    default_account_id = wechat_accounts[0]['id'] if wechat_accounts else ''
+
                     ok = tm.add_track({
                         'id': new_track_id,
                         'name': new_track_name,
@@ -271,7 +301,8 @@ if page == "🎯 赛道管理":
                         'publish': {
                             'max_per_batch': 2,
                             'max_per_day': 4,
-                            'publish_times': '08:00,20:00'
+                            'publish_times': '08:00,20:00',
+                            'account_id': default_account_id
                         }
                     })
                     if ok:
@@ -313,6 +344,8 @@ elif page == "🧪 手动测试":
         active_track = tm.get_active_track()
         track_id = active_track['id'] if active_track else None
         track_name = active_track['name'] if active_track else '全局'
+        # 记录赛道 ID，发布时使用
+        st.session_state['selected_track_id'] = track_id
 
         with st.spinner(f"正在从「{track_name}」抓取..."):
             from fetcher import ArticleFetcher
@@ -404,11 +437,25 @@ elif page == "🧪 手动测试":
 
             # --- Step 3: 发布到微信 ---
             st.markdown("### Step 3 · 发布到微信")
+            # 获取文章关联的赛道账号
+            track_account_id = None
+            if st.session_state.get('selected_track_id'):
+                from track_manager import TrackManager
+                tm = TrackManager()
+                track = tm.get_track(st.session_state['selected_track_id'])
+                if track:
+                    track_account_id = track.get('publish', {}).get('account_id', '')
+                    account_name = track.get('name', '未知账号')
+                    if track_account_id:
+                        st.info(f"📌 将发布到赛道绑定账号: **{account_name}**")
+                    else:
+                        st.warning("⚠️ 赛道未绑定账号，将使用全局配置")
+
             if st.button("📤 发布到微信公众号草稿箱", type="primary", use_container_width=True):
                 with st.spinner("正在发布..."):
                     from publisher import WeChatPublisher
                     try:
-                        publisher = WeChatPublisher(config)
+                        publisher = WeChatPublisher(config, account_id=track_account_id)
                         success = publisher.publish_article(rw)
                         if success:
                             st.success("🎉 发布成功！请到微信公众号后台草稿箱查看")
@@ -757,6 +804,102 @@ elif page == "📊 状态监控":
     st.markdown("---")
     if st.button("🔄 刷新状态", use_container_width=True):
         st.rerun()
+
+# ============================================================
+# 账号管理页面（新增）
+# ============================================================
+elif page == "📱 账号管理":
+    st.title("📱 多账号管理")
+
+    import sys
+    import os
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from account_manager import AccountManager
+
+    am = AccountManager()
+
+    # 统计卡片
+    all_accounts = am.get_all_accounts()
+    wechat_accounts = am.get_wechat_accounts()
+
+    col_stat1, col_stat2 = st.columns(2)
+    with col_stat1:
+        st.metric("账号总数", len(all_accounts))
+    with col_stat2:
+        st.metric("微信公众号", len(wechat_accounts))
+
+    st.markdown("---")
+
+    # ---- 账号列表 ----
+    if all_accounts:
+        st.markdown("### 📋 账号列表")
+
+        for idx, account in enumerate(all_accounts):
+            with st.expander(f"{'✅' if account.get('enabled', True) else '❌'} {account.get('name', account['id'])} ({account.get('platform', '未知')})", expanded=False):
+                st.markdown(f"**账号 ID**: `{account['id']}`")
+                st.markdown(f"**平台**: `{account.get('platform', 'wechat')}`")
+
+                if account.get('platform') == 'wechat':
+                    st.markdown(f"**AppID**: `{account.get('app_id', '')}`")
+                    st.markdown(f"**AppSecret**: `{'*' * 20 + account.get('app_secret', '')[-4:] if account.get('app_secret') else '未设置'}`")
+
+                # 测试按钮
+                if st.button("🔗 测试连接", key=f"test_{account['id']}"):
+                    result = am.test_account(account['id'])
+                    if result['success']:
+                        st.success(f"✅ {result['message']}")
+                    else:
+                        st.error(f"❌ {result['message']}")
+
+                # 删除按钮
+                if st.button("🗑️ 删除账号", key=f"del_{account['id']}"):
+                    if am.delete_account(account['id']):
+                        st.success("账号已删除")
+                        st.rerun()
+
+        st.markdown("---")
+    else:
+        st.info("暂无账号，请添加第一个公众号账号")
+
+    # ---- 新增账号表单 ----
+    st.markdown("### ➕ 添加新账号")
+
+    platform = st.selectbox("平台类型", options=["微信公众号"], index=0)
+
+    col1, col2 = st.columns(2)
+    with col1:
+        account_id = st.text_input("账号 ID（英文/数字，唯一标识）", help="例如: tech_official, biz_account")
+        account_name = st.text_input("账号显示名称", help="例如: 科技前沿、职场干货")
+    with col2:
+        app_id = st.text_input("微信 AppID")
+        app_secret = st.text_input("微信 AppSecret", type="password")
+
+    enabled = st.checkbox("启用此账号", value=True)
+
+    if st.button("添加账号", type="primary", use_container_width=True):
+        if not account_id or not account_name:
+            st.warning("请填写账号 ID 和名称")
+        elif not app_id or not app_secret:
+            st.warning("请填写 AppID 和 AppSecret")
+        else:
+            import re
+            if not re.match(r'^[a-zA-Z0-9_-]+$', account_id):
+                st.error("账号 ID 只能包含字母、数字、下划线、连字符")
+            else:
+                new_account = {
+                    'id': account_id,
+                    'name': account_name,
+                    'platform': 'wechat',
+                    'enabled': enabled,
+                    'app_id': app_id,
+                    'app_secret': app_secret,
+                }
+                ok = am.add_account(new_account)
+                if ok:
+                    st.success(f"✅ 账号「{account_name}」已添加！")
+                    st.rerun()
+                else:
+                    st.error("账号 ID 已存在，请换一个")
 
 # ============================================================
 # 发布历史页面

@@ -10,10 +10,34 @@ from typing import Dict, Optional, List
 from datetime import datetime
 
 class WeChatPublisher:
-    def __init__(self, config: dict):
+    def __init__(self, config: dict, account_id: str = None):
+        """
+        初始化微信发布器
+        :param config: 全局配置（兼容旧模式）
+        :param account_id: 账号 ID（新模式，从账号管理器读取）
+        """
         self.config = config
+        self.account_id = account_id
+        self.token_cache_file = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)),
+            f'.token_cache_{account_id or "default"}.json'
+        )
+
+        # 如果指定了账号 ID，优先从账号管理器读取
+        if account_id:
+            try:
+                from account_manager import AccountManager
+                am = AccountManager()
+                account = am.get_account(account_id)
+                if account:
+                    self.app_id = account.get('app_id', '')
+                    self.app_secret = account.get('app_secret', '')
+                    return
+            except Exception as e:
+                print(f"[WeChatPublisher] 读取账号失败: {e}")
+
+        # 兼容旧模式：从全局配置读取
         self.wechat_config = config.get('wechat', {})
-        
         self.app_id = self.wechat_config.get('app_id', '')
         self.app_secret = self.wechat_config.get('app_secret', '')
         
